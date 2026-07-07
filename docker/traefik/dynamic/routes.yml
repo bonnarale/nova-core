@@ -1,0 +1,49 @@
+http:
+  routers:
+    nova-traefik:
+      rule: Host(`traefik.localhost`)
+      entryPoints:
+        - web
+      service: api@internal
+      middlewares:
+        - security-headers
+
+    nova-backend:
+      rule: Host(`api.localhost`)
+      entryPoints:
+        - web
+      service: nova-backend
+      middlewares:
+        - security-headers
+
+    nova-open-webui:
+      rule: Host(`webui.localhost`)
+      entryPoints:
+        - web
+      service: nova-open-webui
+      middlewares:
+        - security-headers
+
+    nova-n8n:
+      rule: Host(`n8n.localhost`)
+      entryPoints:
+        - web
+      service: nova-n8n
+      middlewares:
+        - security-headers
+
+  services:
+    nova-backend:
+      loadBalancer:
+        servers:
+          - url: http://backend:8000
+
+    nova-open-webui:
+      loadBalancer:
+        servers:
+          - url: http://open-webui:8080
+
+    nova-n8n:
+      loadBalancer:
+        servers:
+          - url: http://n8n:5678

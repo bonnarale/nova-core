@@ -1,0 +1,19 @@
+application:
+  name: NOVA CORE
+  api_version: v1
+  default_environment: production
+
+services:
+  backend:
+    port: 8000
+  frontend:
+    port: 80
+  postgres:
+    port: 5432
+  redis:
+    port: 6379
+  chroma:
+    port: 8000
+  ollama:
+    port: 11434
+
