@@ -3,10 +3,14 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 
+from app.agents.llm_agent import LLMAgent
 from app.api.v1.router import router as api_v1_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.postgres import close_database, init_database
+from app.kernel import get_kernel, register_agent
+from app.memory import ConversationMemory
+from app.models.gateway import ModelGateway
 from app.services.chroma import ChromaService
 from app.services.ollama import OllamaService
 from app.services.redis import close_redis, init_redis
@@ -14,17 +18,50 @@ from app.services.redis import close_redis, init_redis
 settings = get_settings()
 configure_logging(settings.log_level)
 
+SYSTEM_PROMPT = (
+    "You are NOVA CORE, an AI operating system. "
+    "Answer concisely and accurately using the conversation history."
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Infraestructura
     app.state.database = await init_database(settings)
     app.state.redis = await init_redis(settings)
     app.state.chroma = ChromaService(settings)
     app.state.ollama = OllamaService(settings)
-    yield
-    await close_redis(app.state.redis)
-    await close_database(app.state.database)
-    await app.state.ollama.close()
+
+    # Memoria conversacional
+    memory = ConversationMemory(app.state.database)
+    app.state.memory = memory
+
+    # Modelo y Kernel
+    gateway = ModelGateway(settings)
+
+    register_agent(
+        LLMAgent(
+            agent_id="assistant",
+            gateway=gateway,
+            system_prompt=SYSTEM_PROMPT,
+        )
+    )
+
+    kernel = get_kernel(settings)
+    await kernel.start()
+
+    app.state.gateway = gateway
+    app.state.kernel = kernel
+
+    try:
+        yield
+    finally:
+        await kernel.stop()
+        await gateway.close()
+
+        await close_redis(app.state.redis)
+        await close_database(app.state.database)
+        await app.state.ollama.close()
 
 
 app = FastAPI(

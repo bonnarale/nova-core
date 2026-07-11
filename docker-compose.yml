@@ -30,6 +30,8 @@ services:
     build:
       context: .
       dockerfile: docker/backend/Dockerfile
+    ports:
+      - "8000:8000"
     environment:
       PROJECT_NAME: ${PROJECT_NAME:-NOVA CORE}
       ENVIRONMENT: ${ENVIRONMENT:-production}
@@ -134,6 +136,8 @@ services:
 
   ollama:
     image: ollama/ollama:latest
+    ports:
+    - "11434:11434"
     dns:
     - 8.8.8.8
     - 1.1.1.1

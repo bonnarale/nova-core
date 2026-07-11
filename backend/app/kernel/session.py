@@ -44,19 +44,33 @@ class Session:
 _sessions: dict[UUID, Session] = {}
 
 
-def create_session(metadata: Optional[dict[str, Any]] = None) -> Session:
-    """Create and register a new session."""
+def create_session(
+    metadata: Optional[dict[str, Any]] = None,
+    session_id: Optional[UUID] = None,
+) -> Session:
+    """Create and register a new session.
+
+    Args:
+        metadata: Optional metadata dict.
+        session_id: Optional explicit session UUID. If omitted, a random one
+                    is generated. Use this to restore a session from persistent
+                    storage (e.g. a database record).
+
+    Returns:
+        The newly created Session.
+    """
+    sid = session_id or uuid4()
     session = Session(
-        session_id=uuid4(),
+        session_id=sid,
         created_at=datetime.now(timezone.utc),
         metadata=metadata or {},
     )
-    _sessions[session.session_id] = session
-    logger.info("Session created: %s", session.session_id)
+    _sessions[sid] = session
+    logger.info("Session created: %s", sid)
     emit(
         KernelEvent.create(
             event_type=EventType.SESSION_STARTED,
-            session_id=session.session_id,
+            session_id=sid,
             payload={"metadata": session.metadata},
         )
     )

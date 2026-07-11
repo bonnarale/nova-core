@@ -1,9 +1,13 @@
+import json
+import logging
 from typing import Any
 
 import httpx
 
 from app.core.config import Settings
 from app.models.providers.base import ModelProvider
+
+logger = logging.getLogger(__name__)
 
 
 class OllamaProvider(ModelProvider):
@@ -36,9 +40,16 @@ class OllamaProvider(ModelProvider):
             **kwargs,
         }
 
+        logger.info("=== MEMORY_AUDIT [OllamaProvider] request payload ===")
+        logger.info("payload=%s", json.dumps(payload, indent=2, ensure_ascii=False))
+
         response = await self._client.post("/api/chat", json=payload)
         response.raise_for_status()
-        return response.json()
+
+        raw = response.json()
+        logger.info("=== MEMORY_AUDIT [OllamaProvider] raw response ===")
+        logger.info("response=%s", json.dumps(raw, indent=2, ensure_ascii=False))
+        return raw
 
     async def list_models(self) -> list[str]:
         """List available models from Ollama.
