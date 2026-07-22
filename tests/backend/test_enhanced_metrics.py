@@ -233,3 +233,253 @@ class TestMemoryTypeEnum:
 
     def test_error_pattern_is_memory_type(self):
         assert isinstance(MemoryType.ERROR_PATTERN, MemoryType)
+
+
+class TestSuccessTrackerExtended:
+    """Tests for SuccessTracker extended aggregation methods."""
+
+    @pytest.fixture
+    def store(self):
+        from app.learning.outcome_tracker import InMemoryOutcomeStore
+        return InMemoryOutcomeStore()
+
+    @pytest.fixture
+    def tracker(self, store):
+        from app.learning.success_tracker import SuccessTracker
+        return SuccessTracker(store)
+
+    @pytest.mark.asyncio
+    async def test_average_quality_empty(self, tracker):
+        avg = await tracker.compute_average_quality_by_strategy("any")
+        assert avg == 0.0
+
+    @pytest.mark.asyncio
+    async def test_average_quality_with_scores(self, store, tracker):
+        # Strategy A: three successes with quality scores
+        for i, score in enumerate([80, 90, 70]):
+            await store.create(
+                ExecutionOutcome(
+                    id=f"o{i}",
+                    execution_id=f"e{i}",
+                    strategy_used="A",
+                    outcome="success",
+                    quality_score=score,
+                )
+            )
+        avg = await tracker.compute_average_quality_by_strategy("A")
+        assert avg == pytest.approx(80.0)
+
+    @pytest.mark.asyncio
+    async def test_average_quality_ignores_none_scores(self, store, tracker):
+        # Mix of success with score and failure without score
+        await store.create(
+            ExecutionOutcome(
+                id="o1",
+                execution_id="e1",
+                strategy_used="A",
+                outcome="success",
+                quality_score=100,
+            )
+        )
+        await store.create(
+            ExecutionOutcome(
+                id="o2",
+                execution_id="e2",
+                strategy_used="A",
+                outcome="failure",
+                quality_score=None,
+            )
+        )
+        avg = await tracker.compute_average_quality_by_strategy("A")
+        assert avg == 100.0
+
+    @pytest.mark.asyncio
+    async def test_average_quality_no_scores_returns_zero(self, store, tracker):
+        await store.create(
+            ExecutionOutcome(
+                id="o1",
+                execution_id="e1",
+                strategy_used="A",
+                outcome="failure",
+                quality_score=None,
+            )
+        )
+        avg = await tracker.compute_average_quality_by_strategy("A")
+        assert avg == 0.0
+
+    @pytest.mark.asyncio
+    async def test_resource_utilization_empty(self, tracker):
+        result = await tracker.compute_resource_utilization_by_strategy("any")
+        assert result == {"avg_memory_mb": 0.0, "avg_cpu_ms": 0.0, "avg_tokens": 0.0}
+
+    @pytest.mark.asyncio
+    async def test_resource_utilization_with_metrics(self, store, tracker):
+        # Two outcomes with resource metrics
+        rm1 = ResourceMetrics(memory_used_mb=100.0, cpu_time_ms=50.0, tokens_used=1000)
+        rm2 = ResourceMetrics(memory_used_mb=200.0, cpu_time_ms=150.0, tokens_used=2000)
+        await store.create(
+            ExecutionOutcome(
+                id="o1",
+                execution_id="e1",
+                strategy_used="B",
+                outcome="success",
+                resource_metrics=rm1,
+            )
+        )
+        await store.create(
+            ExecutionOutcome(
+                id="o2",
+                execution_id="e2",
+                strategy_used="B",
+                outcome="success",
+                resource_metrics=rm2,
+            )
+        )
+        result = await tracker.compute_resource_utilization_by_strategy("B")
+        assert result["avg_memory_mb"] == pytest.approx(150.0)
+        assert result["avg_cpu_ms"] == pytest.approx(100.0)
+        assert result["avg_tokens"] == pytest.approx(1500.0)
+
+    @pytest.mark.asyncio
+    async def test_resource_utilization_partial_none(self, store, tracker):
+        rm1 = ResourceMetrics(memory_used_mb=100.0, cpu_time_ms=None, tokens_used=500)
+        rm2 = ResourceMetrics(memory_used_mb=None, cpu_time_ms=200.0, tokens_used=None)
+        await store.create(
+            ExecutionOutcome(
+                id="o1",
+                execution_id="e1",
+                strategy_used="C",
+                outcome="success",
+                resource_metrics=rm1,
+            )
+        )
+        await store.create(
+            ExecutionOutcome(
+                id="o2",
+                execution_id="e2",
+                strategy_used="C",
+                outcome="success",
+                resource_metrics=rm2,
+            )
+        )
+        result = await tracker.compute_resource_utilization_by_strategy("C")
+        # Only non-None values counted
+        assert result["avg_memory_mb"] == pytest.approx(100.0)  # only first
+        assert result["avg_cpu_ms"] == pytest.approx(200.0)    # only second
+        assert result["avg_tokens"] == pytest.approx(500.0)    # only first
+
+    @pytest.mark.asyncio
+    async def test_get_metrics_by_execution_id(self, store, tracker):
+        rm = ResourceMetrics(memory_used_mb=128.0, tokens_used=1024)
+        si = SystemImpact(latency_ms=45.0)
+        outcome = ExecutionOutcome(
+            id="o1",
+            execution_id="e1",
+            strategy_used="X",
+            outcome="success",
+            quality_score=85,
+            resource_metrics=rm,
+            system_impact=si,
+        )
+        await store.create(outcome)
+        metrics = await tracker.get_metrics_by_execution_id("e1")
+        assert metrics["quality_score"] == 85
+        assert metrics["resource_metrics"]["memory_used_mb"] == 128.0
+        assert metrics["system_impact"]["latency_ms"] == 45.0
+
+    @pytest.mark.asyncio
+    async def test_get_metrics_by_execution_id_not_found(self, tracker):
+        metrics = await tracker.get_metrics_by_execution_id("nonexistent")
+        assert metrics is None
+
+    @pytest.mark.asyncio
+    async def test_get_metrics_by_time_range(self, store, tracker):
+        # Create outcomes with different created_at timestamps
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        t1 = (now - timedelta(hours=2)).isoformat()
+        t2 = (now - timedelta(hours=1)).isoformat()
+        t3 = now.isoformat()
+        await store.create(
+            ExecutionOutcome(
+                id="o1",
+                execution_id="e1",
+                strategy_used="A",
+                outcome="success",
+                quality_score=80,
+                created_at=t1,
+            )
+        )
+        await store.create(
+            ExecutionOutcome(
+                id="o2",
+                execution_id="e2",
+                strategy_used="A",
+                outcome="success",
+                quality_score=90,
+                created_at=t2,
+            )
+        )
+        await store.create(
+            ExecutionOutcome(
+                id="o3",
+                execution_id="e3",
+                strategy_used="A",
+                outcome="success",
+                quality_score=70,
+                created_at=t3,
+            )
+        )
+        # Query last 90 minutes
+        start = (now - timedelta(minutes=90)).isoformat()
+        end = (now + timedelta(minutes=5)).isoformat()
+        result = await tracker.get_metrics_by_time_range(start, end)
+        assert len(result) == 2
+        # Should include e2 and e3
+        execution_ids = {m["execution_id"] for m in result}
+        assert execution_ids == {"e2", "e3"}
+
+    @pytest.mark.asyncio
+    async def test_get_aggregated_metrics_by_strategy(self, store, tracker):
+        # Strategy D: two outcomes with various metrics
+        rm1 = ResourceMetrics(memory_used_mb=100.0, cpu_time_ms=50.0, tokens_used=1000)
+        rm2 = ResourceMetrics(memory_used_mb=200.0, cpu_time_ms=150.0, tokens_used=2000)
+        si1 = SystemImpact(latency_ms=30.0, throughput_ops_per_sec=100.0)
+        si2 = SystemImpact(latency_ms=60.0, throughput_ops_per_sec=200.0)
+        await store.create(
+            ExecutionOutcome(
+                id="o1",
+                execution_id="e1",
+                strategy_used="D",
+                outcome="success",
+                quality_score=80,
+                resource_metrics=rm1,
+                system_impact=si1,
+                duration_ms=100,
+            )
+        )
+        await store.create(
+            ExecutionOutcome(
+                id="o2",
+                execution_id="e2",
+                strategy_used="D",
+                outcome="success",
+                quality_score=90,
+                resource_metrics=rm2,
+                system_impact=si2,
+                duration_ms=200,
+            )
+        )
+        agg = await tracker.get_aggregated_metrics_by_strategy("D")
+        assert agg["count"] == 2
+        assert agg["avg_quality_score"] == pytest.approx(85.0)
+        assert agg["avg_memory_mb"] == pytest.approx(150.0)
+        assert agg["avg_latency_ms"] == pytest.approx(45.0)
+        assert agg["avg_throughput"] == pytest.approx(150.0)
+        assert agg["avg_duration_ms"] == pytest.approx(150.0)
+
+    @pytest.mark.asyncio
+    async def test_get_aggregated_metrics_empty(self, tracker):
+        agg = await tracker.get_aggregated_metrics_by_strategy("nonexistent")
+        assert agg["count"] == 0
+        assert agg["avg_quality_score"] == 0.0

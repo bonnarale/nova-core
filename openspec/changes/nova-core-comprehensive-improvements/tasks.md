@@ -33,12 +33,12 @@ Chain strategy: feature-branch-chain
 
 ## Phase 2: SuccessTracker Extensions
 
-- [ ] 2.1 Add `compute_average_quality_by_strategy()` to `backend/app/learning/success_tracker.py`
-- [ ] 2.2 Add `compute_resource_utilization_by_strategy()` method
-- [ ] 2.3 Add `get_metrics_by_execution_id()` method
-- [ ] 2.4 Add `get_metrics_by_time_range()` method
-- [ ] 2.5 Add `get_aggregated_metrics_by_strategy()` method
-- [ ] 2.6 Extend `tests/backend/test_enhanced_metrics.py` — test empty store, quality averaging, resource utilization, metrics retrieval, time-range filtering
+- [x] 2.1 Add `compute_average_quality_by_strategy()` to `backend/app/learning/success_tracker.py`
+- [x] 2.2 Add `compute_resource_utilization_by_strategy()` method
+- [x] 2.3 Add `get_metrics_by_execution_id()` method
+- [x] 2.4 Add `get_metrics_by_time_range()` method
+- [x] 2.5 Add `get_aggregated_metrics_by_strategy()` method
+- [x] 2.6 Extend `tests/backend/test_enhanced_metrics.py` — test empty store, quality averaging, resource utilization, metrics retrieval, time-range filtering
 
 ## Phase 3: PreferenceManager
 
