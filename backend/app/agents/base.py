@@ -1,7 +1,23 @@
 """Base agent interface for NOVA CORE."""
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Any
+
+
+@dataclass
+class AgentDefinition:
+    """Metadata describing an agent's capabilities and configuration."""
+
+    agent_id: str
+    name: str
+    role: str
+    description: str
+    system_prompt: str
+    allowed_tools: list[str] = field(default_factory=list)
+    memory_scope: str = "session"
+    permissions: dict[str, Any] = field(default_factory=dict)
+    supported_models: list[str] = field(default_factory=list)
 
 
 class BaseAgent(ABC):
