@@ -1,0 +1,102 @@
+[1mdiff --git a/backend/app/api/v1/router.py b/backend/app/api/v1/router.py[m
+[1mindex 2d3e85f..a2d535a 100644[m
+[1m--- a/backend/app/api/v1/router.py[m
+[1m+++ b/backend/app/api/v1/router.py[m
+[36m@@ -1,7 +1,9 @@[m
+ from fastapi import APIRouter[m
+ [m
+ from app.api.v1.routes.health import router as health_router[m
+[32m+[m[32mfrom app.api.v1.routes.kernel import router as kernel_router[m
+ [m
+ router = APIRouter()[m
+ router.include_router(health_router, tags=["health"])[m
+[32m+[m[32mrouter.include_router(kernel_router)[m
+ [m
+[1mdiff --git a/backend/app/main.py b/backend/app/main.py[m
+[1mindex 63126f1..0b35bdf 100644[m
+[1m--- a/backend/app/main.py[m
+[1m+++ b/backend/app/main.py[m
+[36m@@ -3,10 +3,13 @@[m [mfrom typing import AsyncIterator[m
+ [m
+ from fastapi import FastAPI[m
+ [m
+[32m+[m[32mfrom app.agents.llm_agent import LLMAgent[m
+ from app.api.v1.router import router as api_v1_router[m
+ from app.core.config import get_settings[m
+ from app.core.logging import configure_logging[m
+ from app.db.postgres import close_database, init_database[m
+[32m+[m[32mfrom app.kernel import get_kernel, register_agent[m
+[32m+[m[32mfrom app.models.gateway import ModelGateway[m
+ from app.services.chroma import ChromaService[m
+ from app.services.ollama import OllamaService[m
+ from app.services.redis import close_redis, init_redis[m
+[36m@@ -17,14 +20,37 @@[m [mconfigure_logging(settings.log_level)[m
+ [m
+ @asynccontextmanager[m
+ async def lifespan(app: FastAPI) -> AsyncIterator[None]:[m
+[32m+[m[32m    # Infraestructura[m
+     app.state.database = await init_database(settings)[m
+     app.state.redis = await init_redis(settings)[m
+     app.state.chroma = ChromaService(settings)[m
+     app.state.ollama = OllamaService(settings)[m
+[31m-    yield[m
+[31m-    await close_redis(app.state.redis)[m
+[31m-    await close_database(app.state.database)[m
+[31m-    await app.state.ollama.close()[m
+[32m+[m
+[32m+[m[32m    # Modelo y Kernel[m
+[32m+[m[32m    gateway = ModelGateway(settings)[m
+[32m+[m
+[32m+[m[32m    register_agent([m
+[32m+[m[32m        LLMAgent([m
+[32m+[m[32m            agent_id="assistant",[m
+[32m+[m[32m            gateway=gateway,[m
+[32m+[m[32m        )[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    kernel = get_kernel(settings)[m
+[32m+[m[32m    await kernel.start()[m
+[32m+[m
+[32m+[m[32m    app.state.gateway = gateway[m
+[32m+[m[32m    app.state.kernel = kernel[m
+[32m+[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        yield[m
+[32m+[m[32m    finally:[m
+[32m+[m[32m        await kernel.stop()[m
+[32m+[m[32m        await gateway.close()[m
+[32m+[m
+[32m+[m[32m        await close_redis(app.state.redis)[m
+[32m+[m[32m        await close_database(app.state.database)[m
+[32m+[m[32m        await app.state.ollama.close()[m
+ [m
+ [m
+ app = FastAPI([m
+[36m@@ -49,4 +75,4 @@[m [masync def root() -> dict[str, str]:[m
+ @app.get("/health", summary="Health check")[m
+ async def health() -> dict[str, str]:[m
+     """Health check endpoint."""[m
+[31m-    return {"status": "ok"}[m
+[32m+[m[32m    return {"status": "ok"}[m
+[1mdiff --git a/docker-compose.yml b/docker-compose.yml[m
+[1mindex acc954f..7086a03 100644[m
+[1m--- a/docker-compose.yml[m
+[1m+++ b/docker-compose.yml[m
+[36m@@ -30,6 +30,8 @@[m [mservices:[m
+     build:[m
+       context: .[m
+       dockerfile: docker/backend/Dockerfile[m
+[32m+[m[32m    ports:[m
+[32m+[m[32m      - "8000:8000"[m
+     environment:[m
+       PROJECT_NAME: ${PROJECT_NAME:-NOVA CORE}[m
+       ENVIRONMENT: ${ENVIRONMENT:-production}[m
+[36m@@ -134,6 +136,8 @@[m [mservices:[m
+ [m
+   ollama:[m
+     image: ollama/ollama:latest[m
+[32m+[m[32m    ports:[m
+[32m+[m[32m    - "11434:11434"[m
+     dns:[m
+     - 8.8.8.8[m
+     - 1.1.1.1[m

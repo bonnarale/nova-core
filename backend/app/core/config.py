@@ -28,6 +28,11 @@ class Settings(BaseSettings):
 
     ollama_host: str = Field(default="ollama", alias="OLLAMA_HOST")
     ollama_port: int = Field(default=11434, alias="OLLAMA_PORT")
+    ollama_embedding_model: str = Field(default="nomic-embed-text", alias="OLLAMA_EMBEDDING_MODEL")
+
+    semantic_memory_top_k: int = Field(default=3, alias="SEMANTIC_MEMORY_TOP_K")
+    semantic_memory_relevance_threshold: float = Field(default=0.85, alias="SEMANTIC_MEMORY_RELEVANCE_THRESHOLD")
+    semantic_memory_auto_index: bool = Field(default=True, alias="SEMANTIC_MEMORY_AUTO_INDEX")
 
     @property
     def database_url(self) -> str:
