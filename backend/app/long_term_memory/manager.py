@@ -291,3 +291,117 @@ class LongTermMemoryManager:
 
     async def count_by_status(self) -> dict[str, int]:
         return await self._store.count_by_status()
+
+    # ------------------------------------------------------------------
+    # Preference operations
+    # ------------------------------------------------------------------
+
+    async def create_preference(
+        self,
+        user_id: str,
+        content: str,
+        tags: list[str] | None = None,
+        categories: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> LongTermMemory:
+        """Create a new user preference."""
+        return await self.create_memory(
+            content=content,
+            memory_type=MemoryType.PREFERENCE.value,
+            source="user_preference",
+            user_id=user_id,
+            tags=tags,
+            categories=categories,
+            metadata=metadata,
+        )
+
+    async def get_preferences_by_user(
+        self,
+        user_id: str,
+        tag: str | None = None,
+        category: str | None = None,
+        limit: int = 50,
+    ) -> list[LongTermMemory]:
+        """Get all active preferences for a user, optionally filtered by tag or category."""
+        memories = await self._store.list_by_user(
+            user_id=user_id,
+            memory_type=MemoryType.PREFERENCE.value,
+            status=MemoryStatus.ACTIVE.value,
+            limit=limit,
+        )
+        if tag:
+            memories = [m for m in memories if tag in m.tags]
+        if category:
+            memories = [m for m in memories if category in m.categories]
+        return memories
+
+    async def update_preference(
+        self,
+        preference_id: str,
+        content: str,
+    ) -> LongTermMemory | None:
+        """Update preference content."""
+        memory = await self._store.get(preference_id)
+        if memory is None:
+            return None
+        memory.content = content
+        memory.updated_at = datetime.now(tz=timezone.utc).isoformat()
+        return await self._store.update(memory)
+
+    async def update_preference_metadata(
+        self,
+        preference_id: str,
+        metadata: dict[str, Any],
+    ) -> LongTermMemory | None:
+        """Update preference metadata (merges with existing)."""
+        memory = await self._store.get(preference_id)
+        if memory is None:
+            return None
+        memory.metadata.update(metadata)
+        memory.updated_at = datetime.now(tz=timezone.utc).isoformat()
+        return await self._store.update(memory)
+
+    async def delete_preference(self, preference_id: str) -> bool:
+        """Soft-delete a preference (sets status to DELETED)."""
+        return await self.delete_memory(preference_id)
+
+    async def permanent_delete_preference(self, preference_id: str) -> bool:
+        """Permanently delete a preference from storage."""
+        return await self.permanent_delete(preference_id)
+
+    async def search_preferences(
+        self,
+        user_id: str,
+        query: str,
+        limit: int = 10,
+    ) -> list[LongTermMemory]:
+        """Search preferences by semantic similarity."""
+        result = await self._retriever.search(
+            query=query,
+            memory_type=MemoryType.PREFERENCE.value,
+            user_id=user_id,
+            limit=limit,
+        )
+        return result.results
+
+    async def resolve_preference_conflict(
+        self,
+        existing_preference_id: str,
+        new_preference_id: str,
+        resolution: str = "supersede",
+    ) -> bool:
+        """Resolve conflict between two preferences."""
+        existing = await self._store.get(existing_preference_id)
+        new = await self._store.get(new_preference_id)
+        
+        if existing is None or new is None:
+            return False
+        
+        if resolution == "supersede":
+            existing.status = MemoryStatus.CONSOLIDATED.value
+            existing.updated_at = datetime.now(tz=timezone.utc).isoformat()
+            await self._store.update(existing)
+            # New preference remains ACTIVE
+            return True
+        
+        return False

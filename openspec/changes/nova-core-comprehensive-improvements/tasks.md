@@ -42,22 +42,22 @@ Chain strategy: feature-branch-chain
 
 ## Phase 3: PreferenceManager
 
-- [ ] 3.1 Add `create_preference()` to `backend/app/long_term_memory/manager.py` — creates LongTermMemory with `memory_type="preference"`
-- [ ] 3.2 Add `get_preferences_by_user()` with tag/category filters
-- [ ] 3.3 Add `update_preference()` and `update_preference_metadata()` methods
-- [ ] 3.4 Add `delete_preference()` (soft) and `permanent_delete_preference()` methods
-- [ ] 3.5 Add `search_preferences()` with semantic search
-- [ ] 3.6 Add `resolve_preference_conflict()` with supersede resolution
-- [ ] 3.7 Write `tests/backend/test_preference_memory.py` — CRUD, filters, soft/permanent delete, search, conflict resolution
+- [x] 3.1 Add `create_preference()` to `backend/app/long_term_memory/manager.py` — creates LongTermMemory with `memory_type="preference"`
+- [x] 3.2 Add `get_preferences_by_user()` with tag/category filters
+- [x] 3.3 Add `update_preference()` and `update_preference_metadata()` methods
+- [x] 3.4 Add `delete_preference()` (soft) and `permanent_delete_preference()` methods
+- [x] 3.5 Add `search_preferences()` with semantic search
+- [x] 3.6 Add `resolve_preference_conflict()` with supersede resolution
+- [x] 3.7 Write `tests/backend/test_preference_memory.py` — CRUD, filters, soft/permanent delete, search, conflict resolution
 
 ## Phase 4: ErrorPatternAnalyzer
 
-- [ ] 4.1 Create `backend/app/learning/error_pattern_analyzer.py` with `ErrorPatternAnalyzer` class, `ErrorPattern` and `PatternAnalysis` dataclasses
-- [ ] 4.2 Implement `detect_patterns(min_occurrences=3)` — groups failures by normalized error signature
-- [ ] 4.3 Implement `analyze_pattern()` — computes severity_score from frequency and affected strategies
-- [ ] 4.4 Implement retrieval methods: `get_pattern_by_signature()`, `get_patterns_by_strategy()`, `get_top_severity_patterns()`
-- [ ] 4.5 Implement `get_fix_suggestion()` and `run_pattern_lifecycle()` (archive resolved, purge old)
-- [ ] 4.6 Write `tests/backend/test_error_pattern_analyzer.py` — threshold detection, cross-strategy patterns, severity scoring, lifecycle archival
+- [x] 4.1 Create `backend/app/learning/error_pattern_analyzer.py` with `ErrorPatternAnalyzer` class, `ErrorPattern` and `PatternAnalysis` dataclasses
+- [x] 4.2 Implement `detect_patterns(min_occurrences=3)` — groups failures by normalized error signature
+- [x] 4.3 Implement `analyze_pattern()` — computes severity_score from frequency and affected strategies
+- [x] 4.4 Implement retrieval methods: `get_pattern_by_signature()`, `get_patterns_by_strategy()`, `get_top_severity_patterns()`
+- [x] 4.5 Implement `get_fix_suggestion()` and `run_pattern_lifecycle()` (archive resolved, purge old)
+- [x] 4.6 Write `tests/backend/test_error_pattern_analyzer.py` — threshold detection, cross-strategy patterns, severity scoring, lifecycle archival
 
 ## Phase 5: Integration Verification
 

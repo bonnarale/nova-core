@@ -248,6 +248,7 @@ class ExecutionOutcome:
     outcome: str = "success"  # "success" | "failure" | "partial"
     duration_ms: int = 0
     error_count: int = 0
+    error_message: str | None = None
     user_satisfaction: float | None = None
     quality_score: int | None = None
     resource_metrics: ResourceMetrics | None = None
@@ -267,6 +268,7 @@ class ExecutionOutcome:
             "outcome": self.outcome,
             "duration_ms": self.duration_ms,
             "error_count": self.error_count,
+            "error_message": self.error_message,
             "user_satisfaction": self.user_satisfaction,
             "quality_score": self.quality_score,
             "resource_metrics": {
