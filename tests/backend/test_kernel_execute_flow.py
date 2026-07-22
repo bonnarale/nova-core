@@ -35,6 +35,19 @@ class FakeMemory:
         return self.messages.get(sid, [])[-limit:]
 
 
+class FakeSemanticMemory:
+    """In-memory fake for SemanticMemory."""
+
+    def __init__(self):
+        self.stored: list[dict] = []
+
+    async def store(self, session_id, content):
+        self.stored.append({"session_id": str(session_id), "content": content})
+
+    async def search(self, query, top_k=None):
+        return []
+
+
 class FakeGateway:
     """Fake gateway that records every call for later assertion."""
 
@@ -85,10 +98,16 @@ def fake_memory():
 
 
 @pytest.fixture
-def request_mock(fake_memory):
+def fake_semantic_memory():
+    return FakeSemanticMemory()
+
+
+@pytest.fixture
+def request_mock(fake_memory, fake_semantic_memory):
     """Create a mock FastAPI Request with the kernel and memory wired."""
     req = MagicMock()
     req.app.state.memory = fake_memory
+    req.app.state.semantic_memory = fake_semantic_memory
 
     kernel = get_kernel()
     req.app.state.kernel = kernel
