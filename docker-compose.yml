@@ -30,6 +30,8 @@ services:
     build:
       context: .
       dockerfile: docker/backend/Dockerfile
+    ports:
+      - "8000:8000"
     environment:
       PROJECT_NAME: ${PROJECT_NAME:-NOVA CORE}
       ENVIRONMENT: ${ENVIRONMENT:-production}
@@ -133,7 +135,14 @@ services:
       - no-new-privileges:true
 
   ollama:
-    image: ollama/ollama:0.3.12
+    image: ollama/ollama:latest
+    ports:
+    - "11434:11434"
+    dns:
+    - 8.8.8.8
+    - 1.1.1.1
+    dns_opt:
+    - single-request-reopen
     environment:
       OLLAMA_HOST: 0.0.0.0:11434
       OLLAMA_KEEP_ALIVE: 24h
@@ -220,10 +229,11 @@ services:
 
 networks:
   nova_public:
+    name: nova-core_nova_public
     driver: bridge
   nova_internal:
     driver: bridge
-    internal: true
+    name: nova-core_nova_internal
 
 volumes:
   postgres_data:

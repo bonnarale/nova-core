@@ -1,12 +1,11 @@
 from typing import Any
 
-import chromadb
-
 from app.core.config import Settings
 
 
 class ChromaService:
     def __init__(self, settings: Settings) -> None:
+        import chromadb
         self._client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
 
     @property
