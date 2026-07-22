@@ -239,9 +239,11 @@ class TestMemoryTypeEnum:
         assert MemoryType.AGENT.value == "agent"
         assert MemoryType.KNOWLEDGE.value == "knowledge"
         assert MemoryType.SYSTEM.value == "system"
+        assert MemoryType.PREFERENCE.value == "preference"
+        assert MemoryType.ERROR_PATTERN.value == "error_pattern"
 
     def test_all_members(self):
-        assert len(MemoryType) == 5
+        assert len(MemoryType) == 7
 
 
 class TestMemoryStatusEnum:

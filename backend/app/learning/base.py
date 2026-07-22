@@ -8,6 +8,7 @@ from typing import Any
 from app.learning.models import (
     ArtifactType,
     ConsolidationResult,
+    ExecutionOutcome,
     ExtractedKnowledge,
     KnowledgeArtifact,
     RankedMemory,
@@ -117,4 +118,40 @@ class LearningRetriever(ABC):
         artifact_type: str | None = None,
         limit: int = 10,
     ) -> RetrievalResult:
+        ...
+
+
+class OutcomeStore(ABC):
+    """Interface for persisting execution outcomes."""
+
+    @abstractmethod
+    async def create(self, outcome: ExecutionOutcome) -> ExecutionOutcome:
+        ...
+
+    @abstractmethod
+    async def get_by_execution(self, execution_id: str) -> ExecutionOutcome | None:
+        ...
+
+    @abstractmethod
+    async def list_by_strategy(
+        self, strategy: str, limit: int = 500
+    ) -> list[ExecutionOutcome]:
+        ...
+
+    @abstractmethod
+    async def list_by_agent(
+        self, agent_id: str, limit: int = 500
+    ) -> list[ExecutionOutcome]:
+        ...
+
+    @abstractmethod
+    async def list_all(self, limit: int = 500) -> list[ExecutionOutcome]:
+        ...
+
+    @abstractmethod
+    async def list_failures(self, limit: int = 500) -> list[ExecutionOutcome]:
+        ...
+
+    @abstractmethod
+    async def count(self) -> int:
         ...

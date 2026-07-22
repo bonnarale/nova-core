@@ -10,7 +10,6 @@ from typing import Any
 from app.learning.models import ExecutionOutcome
 from app.long_term_memory.base import MemoryStore
 from app.long_term_memory.models import (
-    LongTermMemory,
     MemoryStatus,
     MemoryType,
 )
