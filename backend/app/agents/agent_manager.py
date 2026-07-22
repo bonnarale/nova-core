@@ -36,6 +36,17 @@ class AgentManager:
         """Get an agent by ID."""
         return self._agents.get(agent_id)
 
+    def get_runtime_agent(self, agent_id: str) -> Agent | None:
+        """Get a runtime agent by ID (alias for get_agent)."""
+        return self._agents.get(agent_id)
+
+    def list_runtime_agents(self) -> list[Any]:
+        """List all registered runtime agents."""
+        return [
+            type("RuntimeAgent", (), {"agent_id": aid})()
+            for aid in self._agents
+        ]
+
     async def dispatch(
         self,
         agent_id: str,
