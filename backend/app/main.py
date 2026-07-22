@@ -3,14 +3,18 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 
+from app.agents.agent_manager import AgentManager
 from app.agents.llm_agent import LLMAgent
 from app.api.v1.router import router as api_v1_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.postgres import close_database, init_database
+from app.events import EventSystemFactory
 from app.kernel import get_kernel, register_agent
 from app.memory import ConversationMemory
 from app.models.gateway import ModelGateway
+from app.orchestrator.task_executor import TaskExecutor
+from app.orchestrator.task_manager import TaskManager
 from app.services.chroma import ChromaService
 from app.services.ollama import OllamaService
 from app.services.redis import close_redis, init_redis
@@ -31,6 +35,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.redis = await init_redis(settings)
     app.state.chroma = ChromaService(settings)
     app.state.ollama = OllamaService(settings)
+
+    # Event System
+    event_factory = EventSystemFactory(default_source="nova-core")
+    event_bus = event_factory.create_bus()
+    await event_bus.start()
+    app.state.event_bus = event_bus
+
+    # Agent Manager
+    agent_manager = AgentManager()
+    app.state.agent_manager = agent_manager
+
+    # Task Manager
+    task_manager = TaskManager(event_bus=event_bus)
+    app.state.task_manager = task_manager
+
+    # Task Executor
+    task_executor = TaskExecutor(
+        event_bus=event_bus,
+        task_manager=task_manager,
+        agent_manager=agent_manager,
+    )
+    await task_executor.start()
+    app.state.task_executor = task_executor
 
     # Memoria conversacional
     memory = ConversationMemory(app.state.database)
@@ -56,6 +83,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        # Shutdown TaskExecutor
+        if hasattr(app.state, "task_executor"):
+            await app.state.task_executor.stop()
+
+        # Shutdown EventBus
+        if hasattr(app.state, "event_bus"):
+            await app.state.event_bus.stop()
+
         await kernel.stop()
         await gateway.close()
 
