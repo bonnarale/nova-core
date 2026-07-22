@@ -4,6 +4,10 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 
 from app.agents.agent_manager import AgentManager
+from app.agents.builtins.planner_agent import PlannerAgent
+from app.agents.builtins.executor_agent import ExecutorAgent
+from app.agents.builtins.coder_agent import CoderAgent
+from app.agents.builtins.research_agent import ResearchAgent
 from app.agents.llm_agent import LLMAgent
 from app.api.v1.router import router as api_v1_router
 from app.core.config import get_settings
@@ -73,6 +77,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             system_prompt=SYSTEM_PROMPT,
         )
     )
+    # Register LLM-powered builtin agents
+    register_agent(PlannerAgent(gateway=gateway))
+    register_agent(ExecutorAgent(gateway=gateway))
+    register_agent(CoderAgent(gateway=gateway))
+    register_agent(ResearchAgent(gateway=gateway))
 
     kernel = get_kernel(settings)
     await kernel.start()
