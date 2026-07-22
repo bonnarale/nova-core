@@ -8,14 +8,20 @@ from app.agents.builtins.planner_agent import PlannerAgent
 from app.agents.builtins.executor_agent import ExecutorAgent
 from app.agents.builtins.coder_agent import CoderAgent
 from app.agents.builtins.research_agent import ResearchAgent
+from app.agents.builtins.meta_agent import MetaAgent
+from app.agents.capability_auditor import CapabilityAuditor
 from app.agents.llm_agent import LLMAgent
 from app.api.v1.router import router as api_v1_router
+from app.cognitive.engine import CognitiveEngine
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.postgres import close_database, init_database
 from app.events import EventSystemFactory
 from app.kernel import get_kernel, register_agent
+from app.learning.evolution_engine import EvolutionEngine
 from app.memory import ConversationMemory
+from app.memory.goals import GoalManager
+from app.memory.profile import UserProfileMemory
 from app.models.gateway import ModelGateway
 from app.orchestrator.task_executor import TaskExecutor
 from app.orchestrator.task_manager import TaskManager
@@ -66,6 +72,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Memoria conversacional
     memory = ConversationMemory(app.state.database)
     app.state.memory = memory
+
+    # SuccessTracker stub (for CapabilityAuditor)
+    class _SuccessTrackerStub:
+        async def compute_strategy_effectiveness(self) -> dict[str, float]:
+            return {}
+
+    success_tracker = _SuccessTrackerStub()
+
+    # CapabilityAuditor
+    auditor = CapabilityAuditor(
+        agent_manager=agent_manager,
+        success_tracker=success_tracker,
+    )
+
+    # MetaAgent
+    meta_agent = MetaAgent(auditor=auditor)
+
+    # EvolutionEngine
+    evolution_engine = EvolutionEngine(
+        bus=event_bus,
+        meta_agent=meta_agent,
+    )
+    app.state.evolution_engine = evolution_engine
+
+    # CognitiveEngine
+    goal_manager = GoalManager(database=app.state.database)
+    profile_memory = UserProfileMemory(database=app.state.database)
+    cognitive_engine = CognitiveEngine(
+        goal_manager=goal_manager,
+        task_manager=task_manager,
+        agent_manager=agent_manager,
+        profile_memory=profile_memory,
+        conversation_memory=memory,
+        event_publisher=event_bus,
+        evolution_engine=evolution_engine,
+    )
+    app.state.cognitive_engine = cognitive_engine
 
     # Modelo y Kernel
     gateway = ModelGateway(settings)
