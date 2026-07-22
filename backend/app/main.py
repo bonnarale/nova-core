@@ -19,6 +19,8 @@ from app.db.postgres import close_database, init_database
 from app.events import EventSystemFactory
 from app.kernel import get_kernel, register_agent
 from app.learning.evolution_engine import EvolutionEngine
+from app.learning.outcome_tracker import InMemoryOutcomeStore
+from app.learning.success_tracker import SuccessTracker
 from app.memory import ConversationMemory
 from app.memory.goals import GoalManager
 from app.memory.profile import UserProfileMemory
@@ -73,12 +75,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     memory = ConversationMemory(app.state.database)
     app.state.memory = memory
 
-    # SuccessTracker stub (for CapabilityAuditor)
-    class _SuccessTrackerStub:
-        async def compute_strategy_effectiveness(self) -> dict[str, float]:
-            return {}
-
-    success_tracker = _SuccessTrackerStub()
+    # SuccessTracker (for CapabilityAuditor)
+    outcome_store = InMemoryOutcomeStore()
+    success_tracker = SuccessTracker(store=outcome_store)
 
     # CapabilityAuditor
     auditor = CapabilityAuditor(
