@@ -107,7 +107,7 @@ export default function ChatPage() {
           <div ref={messagesEndRef} />
         </div>
         <div className="border-t border-gray-700 p-4 -mx-6 -mb-6">
-          <div className="flex gap-3">
+          <div className="flex flex-col gap-3">
             <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}

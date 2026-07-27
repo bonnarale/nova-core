@@ -28,6 +28,7 @@ class Settings(BaseSettings):
 
     ollama_host: str = Field(default="ollama", alias="OLLAMA_HOST")
     ollama_port: int = Field(default=11434, alias="OLLAMA_PORT")
+    ollama_embedding_model: str = Field(default="nomic-embed-text", alias="OLLAMA_EMBEDDING_MODEL")
 
     @property
     def database_url(self) -> str:

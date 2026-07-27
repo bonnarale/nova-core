@@ -268,8 +268,8 @@ export function NovaChat({
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="border-t border-gray-700/50 p-4 -mx-6">
-        <div className="flex gap-3">
+      <div className="border-t border-gray-700/50 p-4">
+        <div className="flex flex-col gap-3">
           <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}

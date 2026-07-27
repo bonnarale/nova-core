@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents.agent_manager import AgentManager
 from app.agents.builtins.planner_agent import PlannerAgent
@@ -97,7 +98,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # CognitiveEngine
     goal_manager = GoalManager(database=app.state.database)
+    app.state.goal_manager = goal_manager
     profile_memory = UserProfileMemory(database=app.state.database)
+    app.state.profile_memory = profile_memory
+    from app.memory.semantic import SemanticMemory
+    semantic_memory = SemanticMemory(app.state.chroma.client, app.state.ollama)
+    app.state.semantic_memory = semantic_memory
+    from app.workflows.engine import WorkflowEngine
+    workflow_engine = WorkflowEngine()
+    app.state.workflow_engine = workflow_engine
+    from app.tools.manager import ToolManager
+    from app.tools.factory import ToolFactory
+    from app.tools.runtime import ToolRuntime
+    tool_manager = ToolManager()
+    tool_factory = ToolFactory(manager=tool_manager)
+    tool_factory.register_all_builtins()
+    tool_runtime = ToolRuntime(manager=tool_manager)
+    app.state.tool_manager = tool_manager
+    app.state.tool_factory = tool_factory
+    app.state.tool_runtime = tool_runtime
     cognitive_engine = CognitiveEngine(
         goal_manager=goal_manager,
         task_manager=task_manager,
@@ -160,7 +179,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.include_router(api_v1_router)
+app.include_router(api_v1_router, prefix="/api/v1")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/", summary="Root endpoint")
