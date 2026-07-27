@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     project_name: str = Field(default="NOVA CORE", alias="PROJECT_NAME")
     environment: str = Field(default="production", alias="ENVIRONMENT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    allowed_origins: str = Field(default="http://localhost:5173,http://localhost:3000", alias="ALLOWED_ORIGINS")
 
     postgres_db: str = Field(default="nova_core", alias="POSTGRES_DB")
     postgres_user: str = Field(default="nova_core", alias="POSTGRES_USER")
@@ -54,6 +55,10 @@ class Settings(BaseSettings):
     @property
     def ollama_url(self) -> str:
         return f"http://{self.ollama_host}:{self.ollama_port}"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
 
 
 @lru_cache
