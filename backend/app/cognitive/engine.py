@@ -193,6 +193,14 @@ class CognitiveEngine:
         except Exception:
             logger.debug("Could not load tasks")
 
+        # 5. Semantic memory search — enrich context with relevant past knowledge
+        if self._semantic_memory is not None:
+            try:
+                results = await self._semantic_memory.search(raw_input, top_k=5)
+                ctx.semantic_memories = results
+            except Exception:
+                logger.debug("Could not search semantic memory")
+
         ctx.extra["raw_input"] = raw_input
 
         return ctx

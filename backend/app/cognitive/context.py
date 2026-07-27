@@ -42,6 +42,7 @@ class CognitiveContext:
     pending_tasks: list[dict[str, Any]] = field(default_factory=list)
     running_tasks: list[dict[str, Any]] = field(default_factory=list)
     agent_registry: list[str] = field(default_factory=list)
+    semantic_memories: list[dict[str, Any]] = field(default_factory=list)
 
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -57,5 +58,6 @@ class CognitiveContext:
             "goals_count": len(self.goals),
             "pending_tasks_count": len(self.pending_tasks),
             "running_tasks_count": len(self.running_tasks),
+            "semantic_memories_count": len(self.semantic_memories),
             "agent_registry": self.agent_registry,
         }
