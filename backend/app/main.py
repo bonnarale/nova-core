@@ -123,10 +123,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         agent_manager=agent_manager,
         profile_memory=profile_memory,
         conversation_memory=memory,
+        semantic_memory=semantic_memory,
         event_publisher=event_bus,
         evolution_engine=evolution_engine,
     )
     app.state.cognitive_engine = cognitive_engine
+
+    # --- Auto-index semantic memory at startup ---
+    try:
+        # Index any existing user profiles
+        default_user_id = None
+        if default_user_id:
+            profile = await profile_memory.get_profile(default_user_id)
+            if profile:
+                await semantic_memory.auto_index(profile=profile)
+        logger.info("Semantic memory auto-index complete")
+    except Exception as exc:
+        logger.warning("Semantic memory auto-index failed: %s", exc)
 
     # Modelo y Kernel
     gateway = ModelGateway(settings)
