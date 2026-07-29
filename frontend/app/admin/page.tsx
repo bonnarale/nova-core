@@ -18,7 +18,7 @@ export default function AdminPage() {
 
   if (loading) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
 
-  const envVars = raw?.data?.variables || (raw?.variables as Record<string, string>) || {};
+  const envVars = raw?.data?.variables || {};
 
   return (
     <div>
