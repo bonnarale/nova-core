@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Notification, ChatMessage } from "@/types";
+import { syncAuthToken } from "@/lib/api";
+
+interface AuthUser {
+  user_id: string;
+  username: string;
+  email: string;
+}
 
 interface AppState {
   theme: "light" | "dark";
@@ -15,11 +22,17 @@ interface AppState {
   userId: string;
   setSessionId: (id: string) => void;
   setUserId: (id: string) => void;
+  token: string;
+  user: AuthUser | null;
+  setToken: (token: string) => void;
+  setUser: (user: AuthUser | null) => void;
+  logout: () => void;
+  isAuthenticated: () => boolean;
 }
 
 export const useAppStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       theme: "dark",
       setTheme: (theme) => set({ theme }),
       sidebarOpen: true,
@@ -41,9 +54,27 @@ export const useAppStore = create<AppState>()(
       userId: "",
       setSessionId: (sessionId) => set({ sessionId }),
       setUserId: (userId) => set({ userId }),
+      token: "",
+      user: null,
+      setToken: (token) => {
+        set({ token });
+        syncAuthToken(token);
+      },
+      setUser: (user) => set({ user, userId: user?.user_id || "" }),
+      logout: () => {
+        set({ token: "", user: null, userId: "" });
+        syncAuthToken("");
+      },
+      isAuthenticated: () => !!get().token && !!get().user,
     }),
     {
       name: "nova-app-store",
+      onRehydrateStorage: () => (state) => {
+        // Sync token with NovaAPI after hydration from localStorage
+        if (state?.token) {
+          syncAuthToken(state.token);
+        }
+      },
     }
   )
 );

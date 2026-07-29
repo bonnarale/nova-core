@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.routes.agents import router as agents_router
+from app.api.v1.routes.auth import router as auth_router
 from app.api.v1.routes.autonomy import router as autonomy_router
 from app.api.v1.routes.autonomy_system import router as autonomy_system_router
 from app.api.v1.routes.command_center import router as command_center_router
@@ -31,6 +32,7 @@ from app.api.v1.routes.workflows import router as workflows_router
 router = APIRouter()
 
 router.include_router(agents_router)
+router.include_router(auth_router)
 router.include_router(autonomy_router)
 router.include_router(autonomy_system_router)
 router.include_router(command_center_router)

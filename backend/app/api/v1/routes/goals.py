@@ -1,9 +1,14 @@
 """Goal management API endpoints."""
 
-from uuid import UUID
+import uuid
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
+
+
+def _user_id_to_uuid(user_id: str) -> uuid.UUID:
+    """Convert any user_id string to a deterministic UUID."""
+    return uuid.uuid5(uuid.NAMESPACE_DNS, user_id)
 
 router = APIRouter(prefix="/goals", tags=["Goals"])
 
@@ -35,30 +40,30 @@ def _get_goal_manager(request: Request):
 
 @router.get("/{user_id}")
 async def list_goals(
-    user_id: UUID,
+    user_id: str,
     request: Request,
     status: str | None = Query(default=None, pattern=r"^(active|blocked|completed|abandoned)$"),
 ) -> list[dict]:
     gm = _get_goal_manager(request)
-    return await gm.list_goals(user_id, status=status)
+    return await gm.list_goals(_user_id_to_uuid(user_id), status=status)
 
 
 @router.post("/{user_id}")
 async def create_goal(
-    user_id: UUID,
+    user_id: str,
     body: CreateGoalRequest,
     request: Request,
 ) -> dict:
     gm = _get_goal_manager(request)
     return await gm.create_goal(
-        user_id, body.title, body.description, body.priority
+        _user_id_to_uuid(user_id), body.title, body.description, body.priority
     )
 
 
 @router.get("/{user_id}/detail/{goal_id}")
 async def get_goal(
-    user_id: UUID,
-    goal_id: UUID,
+    user_id: str,
+    goal_id: str,
     request: Request,
 ) -> dict:
     gm = _get_goal_manager(request)
@@ -73,8 +78,8 @@ async def get_goal(
 
 @router.patch("/{user_id}/detail/{goal_id}")
 async def update_goal(
-    user_id: UUID,
-    goal_id: UUID,
+    user_id: str,
+    goal_id: str,
     body: UpdateGoalRequest,
     request: Request,
 ) -> dict:
@@ -98,8 +103,8 @@ async def update_goal(
 
 @router.delete("/{user_id}/detail/{goal_id}", status_code=status.HTTP_200_OK)
 async def delete_goal(
-    user_id: UUID,
-    goal_id: UUID,
+    user_id: str,
+    goal_id: str,
     request: Request,
 ) -> dict:
     gm = _get_goal_manager(request)
@@ -114,27 +119,27 @@ async def delete_goal(
 
 @router.get("/{user_id}/next-actions")
 async def next_actions(
-    user_id: UUID,
+    user_id: str,
     request: Request,
     limit: int = Query(default=3, ge=1, le=10),
 ) -> list[dict]:
     gm = _get_goal_manager(request)
-    return await gm.get_next_actions(user_id, limit=limit)
+    return await gm.get_next_actions(_user_id_to_uuid(user_id), limit=limit)
 
 
 @router.get("/{user_id}/blocked")
 async def blocked_goals(
-    user_id: UUID,
+    user_id: str,
     request: Request,
 ) -> list[dict]:
     gm = _get_goal_manager(request)
-    return await gm.get_blocked_goals(user_id)
+    return await gm.get_blocked_goals(_user_id_to_uuid(user_id))
 
 
 @router.get("/{user_id}/analyze")
 async def analyze(
-    user_id: UUID,
+    user_id: str,
     request: Request,
 ) -> dict:
     gm = _get_goal_manager(request)
-    return await gm.analyze_progress(user_id)
+    return await gm.analyze_progress(_user_id_to_uuid(user_id))

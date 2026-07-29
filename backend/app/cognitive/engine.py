@@ -98,6 +98,7 @@ class CognitiveEngine:
         raw_input: str,
         user_id: str | None = None,
         session_id: str | None = None,
+        skip_approval_check: bool = False,
     ) -> CognitiveState:
         """Full cognitive cycle: load context → detect intent → decide.
 
@@ -113,7 +114,9 @@ class CognitiveEngine:
             decision = await self._router.route(context)
             state.decision = decision
 
-            result = await self._execute_decision(decision, context)
+            result = await self._execute_decision(
+                decision, context, skip_approval_check=skip_approval_check
+            )
             state.execution_result = result
 
             await self._publish_event(
@@ -213,6 +216,7 @@ class CognitiveEngine:
         self,
         decision: CognitiveDecision,
         context: CognitiveContext,
+        skip_approval_check: bool = False,
     ) -> dict[str, Any] | None:
         """Execute side effects for a decision where appropriate.
 
@@ -222,37 +226,38 @@ class CognitiveEngine:
         action = decision.action
 
         # --- Approval gate: intercept risky/impactful actions before executing ---
-        approval_gated_actions = (
-            DecisionAction.CREATE_PLAN,
-            DecisionAction.DELEGATE_TO_PLANNER,
-            DecisionAction.DELEGATE_TO_RESEARCHER,
-            DecisionAction.DELEGATE_TO_CODER,
-            DecisionAction.DELEGATE_TO_EXECUTOR,
-            DecisionAction.DELEGATE_TO_REVIEWER,
-            DecisionAction.EXECUTE_WORKFLOW,
-            DecisionAction.DELEGATE_TO_OPENCODE,
-        )
-        if self._approvals_manager is not None and action in approval_gated_actions:
-            task_description = (
-                decision.payload.get("objective")
-                or decision.payload.get("task")
-                or decision.payload.get("query")
-                or context.raw_input
+        if not skip_approval_check:
+            approval_gated_actions = (
+                DecisionAction.CREATE_PLAN,
+                DecisionAction.DELEGATE_TO_PLANNER,
+                DecisionAction.DELEGATE_TO_RESEARCHER,
+                DecisionAction.DELEGATE_TO_CODER,
+                DecisionAction.DELEGATE_TO_EXECUTOR,
+                DecisionAction.DELEGATE_TO_REVIEWER,
+                DecisionAction.EXECUTE_WORKFLOW,
+                DecisionAction.DELEGATE_TO_OPENCODE,
             )
-            mandatory_category = self._approvals_manager.requires_mandatory_approval(task_description)
-            if mandatory_category:
-                approval = self._approvals_manager.request(
-                    action_type=action.value if hasattr(action, "value") else str(action),
-                    description=task_description,
-                    requester="cognitive_engine",
-                    metadata={"reasoning": decision.reasoning, "payload": decision.payload},
+            if self._approvals_manager is not None and action in approval_gated_actions:
+                task_description = (
+                    decision.payload.get("objective")
+                    or decision.payload.get("task")
+                    or decision.payload.get("query")
+                    or context.raw_input
                 )
-                return {
-                    "approval_required": True,
-                    "approval_id": approval.id,
-                    "approval_category": mandatory_category,
-                    "message": f"This action requires your approval before execution ({mandatory_category}).",
-                }
+                mandatory_category = self._approvals_manager.requires_mandatory_approval(task_description)
+                if mandatory_category:
+                    approval = self._approvals_manager.request(
+                        action_type=action.value if hasattr(action, "value") else str(action),
+                        description=task_description,
+                        requester="cognitive_engine",
+                        metadata={"reasoning": decision.reasoning, "payload": decision.payload},
+                    )
+                    return {
+                        "approval_required": True,
+                        "approval_id": approval.id,
+                        "approval_category": mandatory_category,
+                        "message": f"This action requires your approval before execution ({mandatory_category}).",
+                    }
 
         if action == DecisionAction.CREATE_GOAL:
             return await self._execute_create_goal(decision, context)

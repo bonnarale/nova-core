@@ -15,7 +15,7 @@ class OllamaProvider(ModelProvider):
 
     def __init__(self, settings: Settings) -> None:
         self._base_url = settings.ollama_url
-        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=30.0)
+        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=180.0)
 
     async def chat(
         self,

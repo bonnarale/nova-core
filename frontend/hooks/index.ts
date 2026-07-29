@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useAppStore } from "@/stores";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -8,10 +9,13 @@ export function useApi<T>(fetcherOrUrl: (() => Promise<T>) | string, deps: unkno
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const token = useAppStore((s) => s.token);
 
   const fetcher = typeof fetcherOrUrl === "function"
     ? fetcherOrUrl
-    : () => fetch(`${API_BASE}${fetcherOrUrl}`).then(async (r) => {
+    : () => fetch(`${API_BASE}${fetcherOrUrl}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      }).then(async (r) => {
         if (!r.ok) {
           let msg = `HTTP ${r.status}`;
           try { const j = await r.json(); msg = j.detail || j.message || msg; } catch {}
@@ -32,7 +36,7 @@ export function useApi<T>(fetcherOrUrl: (() => Promise<T>) | string, deps: unkno
       .catch((e) => { if (!cancelled) setError(e.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, deps);
+  }, [...deps, token]);
 
   return { data, error, loading, refetch: () => { setLoading(true); fetcher().then(setData).catch((e) => setError(e.message)).finally(() => setLoading(false)); } };
 }

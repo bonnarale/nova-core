@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useAppStore } from "@/stores";
 
 const NAV_ITEMS = [
@@ -53,8 +53,14 @@ export function Sidebar() {
 }
 
 export function Header() {
-  const { theme, setTheme, notifications } = useAppStore();
+  const { theme, setTheme, notifications, user, logout } = useAppStore();
+  const router = useRouter();
   const unread = notifications.filter((n) => !n.read).length;
+
+  const handleLogout = () => {
+    logout();
+    router.push("/auth");
+  };
 
   return (
     <header className="h-14 bg-gray-900/80 backdrop-blur border-b border-gray-800 flex items-center justify-between px-6 sticky top-0 z-40">
@@ -71,7 +77,16 @@ export function Header() {
             {unread > 0 && <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">{unread}</span>}
           </span>
         </div>
-        <div className="w-8 h-8 bg-indigo-600 rounded-full flex items-center justify-center text-white text-sm font-medium">U</div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-400">{user?.username || user?.email || "User"}</span>
+          <button
+            onClick={handleLogout}
+            className="text-gray-400 hover:text-red-400 p-2 text-sm"
+            title="Logout"
+          >
+            {"\u2190"}
+          </button>
+        </div>
       </div>
     </header>
   );

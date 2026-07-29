@@ -17,17 +17,14 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const { sessionId, setSessionId, userId, setUserId } = useAppStore();
+  const { sessionId, setSessionId } = useAppStore();
 
   useEffect(() => {
-    // Initialize session_id and user_id if not set
+    // Initialize session_id if not set
     if (!sessionId) {
       setSessionId(crypto.randomUUID());
     }
-    if (!userId) {
-      setUserId(crypto.randomUUID());
-    }
-  }, [sessionId, userId, setSessionId, setUserId]);
+  }, [sessionId, setSessionId]);
 
   // Load conversation history on mount
   useEffect(() => {

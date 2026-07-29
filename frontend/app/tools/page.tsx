@@ -95,7 +95,7 @@ export default function ToolsPage() {
         </Card>
       </div>
 
-      {data.optimization.length > 0 && (
+      {data.optimization && data.optimization.length > 0 && (
         <Card title={`Optimizations (${data.optimization.length})`} className="mt-4">
           <pre className="text-xs text-gray-400 overflow-x-auto">{JSON.stringify(data.optimization, null, 2)}</pre>
         </Card>

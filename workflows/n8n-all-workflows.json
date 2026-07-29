@@ -1,0 +1,1039 @@
+[
+  {
+    "name": "Deep Research Pipeline",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "deep-research",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          250,
+          300
+        ],
+        "webhookId": "deep-research"
+      },
+      {
+        "parameters": {
+          "jsCode": "const body = $input.first().json.body;\nconst topic = body.topic || '';\nconst mode = body.mode || 'assisted';\nconst audit = body.audit !== false;\n\nif (!topic) {\n  throw new Error('Missing required field: topic');\n}\n\nreturn [{ json: { topic, mode, audit, timestamp: new Date().toISOString() } }];"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          470,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Prepare the dispatch request body as a proper object\nconst topic = $json.topic;\nconst mode = $json.mode;\n\nconst requestBody = {\n  task: `Design a deep research execution prompt for: ${topic}. Mode: ${mode}. Produce a self-contained prompt that an external research tool can execute.`,\n  context: {\n    agent_id: 'prompter',\n    prompt: `You are a Deep Research Architect. Design a comprehensive research execution prompt for the topic: ${topic}. Include: research questions, search strategy, expected sources, quality criteria. Mode: ${mode}.`,\n    level: 3,\n    domain: 'research'\n  }\n};\n\nreturn [{ json: requestBody }];"
+        },
+        "id": "prepare-body-phase1",
+        "name": "Prepare Body Phase 1",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          580,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://nova-core-backend-1:8000/api/v1/agents/runtime/dispatch",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "id": "phase1-deepr",
+        "name": "Phase 1: Deep Research Architect",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          790,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const result = $input.first().json;\nconst agentResult = result.result || result;\nconst improvedPrompt = agentResult.improved_prompt || agentResult.prompt || '';\n\nreturn [{\n  json: {\n    topic: $('Validate Input').first().json.topic,\n    execution_prompt: improvedPrompt,\n    changes: agentResult.changes_made || [],\n    level: agentResult.level_applied || 0\n  }\n}];"
+        },
+        "id": "extract-prompt",
+        "name": "Extract Execution Prompt",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1010,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Prepare RAG query body\nconst executionPrompt = $json.execution_prompt;\n\nreturn [{\n  json: {\n    query: executionPrompt,\n    top_k: 10\n  }\n}];"
+        },
+        "id": "prepare-body-phase2",
+        "name": "Prepare Body Phase 2",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1230,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://nova-core-backend-1:8000/api/v1/rag/query",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "phase2-retrieval",
+        "name": "Phase 2: Knowledge Retrieval",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1450,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const retrieval = $input.first().json;\nconst context = retrieval.context || {};\nconst chunks = context.retrieved_chunks || [];\n\nconst researchContext = chunks.map(c => {\n  const content = c.chunk?.content || '';\n  const score = c.score || 0;\n  const title = c.chunk?.metadata?.title || 'unknown';\n  return `[${title}] (score: ${score.toFixed(3)}) ${content.substring(0, 200)}`;\n}).join('\\n---\\n');\n\nreturn [{\n  json: {\n    topic: $('Extract Execution Prompt').first().json.topic,\n    execution_prompt: $('Extract Execution Prompt').first().json.execution_prompt,\n    research_context: researchContext,\n    chunks_found: chunks.length\n  }\n}];"
+        },
+        "id": "build-context",
+        "name": "Build Research Context",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1670,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "audit-check",
+                "leftValue": "={{ $('Validate Input').first().json.audit }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals",
+                  "singleValue": false
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        },
+        "id": "audit-gate",
+        "name": "Audit Enabled?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1890,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Prepare audit dispatch body\nconst topic = $('Validate Input').first().json.topic;\nconst chunksFound = $json.chunks_found;\n\nreturn [{\n  json: {\n    task: `Audit the research output for topic: ${topic}. Evaluate across 10 dimensions: source integrity, perspective diversity, evidence quality, bias detection, confidence calibration, information gaps, internal consistency, relevance, structure, actionability.`,\n    context: {\n      agent_id: 'critic-premortem',\n      plan: `Research on ${topic}. Retrieved ${chunksFound} knowledge chunks.`,\n      level: 2\n    }\n  }\n}];"
+        },
+        "id": "prepare-body-phase3",
+        "name": "Prepare Body Phase 3",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2110,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://nova-core-backend-1:8000/api/v1/agents/runtime/dispatch",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "id": "phase3-audit",
+        "name": "Phase 3: Research Audit",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2330,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const audit = $input.first().json;\nconst auditResult = audit.result || audit;\n\nreturn [{\n  json: {\n    topic: $('Validate Input').first().json.topic,\n    execution_prompt: $('Extract Execution Prompt').first().json.execution_prompt,\n    research_context: $('Build Research Context').first().json.research_context,\n    audit_summary: auditResult.summary || 'No audit summary',\n    failure_reasons: auditResult.failure_reasons || [],\n    checklist: auditResult.checklist || []\n  }\n}];"
+        },
+        "id": "merge-audit",
+        "name": "Merge Audit Results",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2550,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const data = $input.first().json;\n\nconst output = {\n  status: 'completed',\n  topic: data.topic,\n  execution_prompt: data.execution_prompt,\n  research_context: data.research_context || '',\n  audit: {\n    summary: data.audit_summary || 'Audit skipped',\n    failure_reasons: data.failure_reasons || [],\n    checklist: data.checklist || []\n  },\n  timestamp: new Date().toISOString()\n};\n\nreturn [{ json: output }];"
+        },
+        "id": "format-output",
+        "name": "Format Final Output",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2770,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "respond-webhook",
+        "name": "Respond to Webhook",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2990,
+          300
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Prepare Body Phase 1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Body Phase 1": {
+        "main": [
+          [
+            {
+              "node": "Phase 1: Deep Research Architect",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Phase 1: Deep Research Architect": {
+        "main": [
+          [
+            {
+              "node": "Extract Execution Prompt",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Execution Prompt": {
+        "main": [
+          [
+            {
+              "node": "Prepare Body Phase 2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Body Phase 2": {
+        "main": [
+          [
+            {
+              "node": "Phase 2: Knowledge Retrieval",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Phase 2: Knowledge Retrieval": {
+        "main": [
+          [
+            {
+              "node": "Build Research Context",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Research Context": {
+        "main": [
+          [
+            {
+              "node": "Audit Enabled?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Audit Enabled?": {
+        "main": [
+          [
+            {
+              "node": "Prepare Body Phase 3",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Format Final Output",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Body Phase 3": {
+        "main": [
+          [
+            {
+              "node": "Phase 3: Research Audit",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Phase 3: Research Audit": {
+        "main": [
+          [
+            {
+              "node": "Merge Audit Results",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Merge Audit Results": {
+        "main": [
+          [
+            {
+              "node": "Format Final Output",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Final Output": {
+        "main": [
+          [
+            {
+              "node": "Respond to Webhook",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "active": false,
+    "settings": {
+      "executionOrder": "v1"
+    }
+  },
+  {
+    "name": "Audit Pipeline",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "audit-pipeline",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          250,
+          300
+        ],
+        "webhookId": "audit-pipeline"
+      },
+      {
+        "parameters": {
+          "jsCode": "const body = $input.first().json.body;\nconst target = body.target || '';\nconst domain = body.domain || 'general';\nconst depth = body.depth || 'standard';\nif (!target) throw new Error('Missing required field: target');\nreturn [{ json: { target, domain, depth, timestamp: new Date().toISOString() } }];"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          470,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const { target, domain, depth } = $json;\nreturn [{\n  json: {\n    task: `Perform a code review of: ${target}. Domain: ${domain}. Focus on security, correctness, maintainability, performance, testing.`,\n    context: { agent_id: 'code-reviewer', code: target, language: domain, review_level: depth }\n  }\n}];"
+        },
+        "id": "prepare-cr-body",
+        "name": "Prepare CR Body",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          690,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://nova-core-backend-1:8000/api/v1/agents/runtime/dispatch",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "id": "phase1-code-review",
+        "name": "Phase 1: Code Review",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          910,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const cr = $input.first().json;\nconst crResult = cr.result || cr;\nconst findings = crResult.findings || [];\nconst blockers = findings.filter(f => f.severity === 'blocker').length;\nconst suggestions = findings.filter(f => f.severity === 'suggestion').length;\nlet score = Math.max(0, Math.min(100, 100 - blockers * 20 - suggestions * 5));\nlet verdict = score >= 80 ? 'READY' : score >= 60 ? 'NEEDS_WORK' : 'NOT_READY';\nreturn [{\n  json: {\n    status: 'completed',\n    target: $('Validate Input').first().json.target,\n    domain: $('Validate Input').first().json.domain,\n    readiness_score: score,\n    verdict,\n    code_review: { findings, summary: crResult.summary || '', severity_counts: crResult.severity_counts || {} },\n    timestamp: new Date().toISOString()\n  }\n}];"
+        },
+        "id": "synthesize",
+        "name": "Synthesize & Verdict",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1130,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "respond-webhook",
+        "name": "Respond to Webhook",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1350,
+          300
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Prepare CR Body",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare CR Body": {
+        "main": [
+          [
+            {
+              "node": "Phase 1: Code Review",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Phase 1: Code Review": {
+        "main": [
+          [
+            {
+              "node": "Synthesize & Verdict",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Synthesize & Verdict": {
+        "main": [
+          [
+            {
+              "node": "Respond to Webhook",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "active": false,
+    "settings": {
+      "executionOrder": "v1"
+    }
+  },
+  {
+    "name": "Skill Incorporation Pipeline",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "skill-incorporation",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "webhook-trigger",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          250,
+          300
+        ],
+        "webhookId": "skill-incorporation"
+      },
+      {
+        "parameters": {
+          "jsCode": "const body = $input.first().json.body;\nconst source = body.source || '';\nconst skillType = body.skill_type || 'skill';\nconst securityLevel = body.security_level || 'standard';\nif (!source) throw new Error('Missing required field: source');\nreturn [{ json: { source, skill_type: skillType, security_level: securityLevel, timestamp: new Date().toISOString() } }];"
+        },
+        "id": "validate-input",
+        "name": "Validate Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          470,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "return [{\n  json: {\n    task: `Analyze source for nova-core skill incorporation. Identify: name, category, capabilities, dependencies, security requirements. Source: ${$json.source}`,\n    context: { agent_id: 'code-reviewer', code: $json.source, review_level: 'standard', focus: 'skill-analysis' }\n  }\n}];"
+        },
+        "id": "prepare-scan-body",
+        "name": "Prepare Scan Body",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          580,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://nova-core-backend-1:8000/api/v1/agents/runtime/dispatch",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "id": "phase1-scan",
+        "name": "Phase 1: Pattern Scan",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          790,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const result = $input.first().json;\nconst r = result.result || result;\nreturn [{\n  json: {\n    source: $('Validate Input').first().json.source,\n    skill_type: $('Validate Input').first().json.skill_type,\n    security_level: $('Validate Input').first().json.security_level,\n    analysis: { name: r.name || 'unknown', category: r.category || 'general', capabilities: r.capabilities || [], dependencies: r.dependencies || [], security_requirements: r.security_requirements || [] }\n  }\n}];"
+        },
+        "id": "extract-analysis",
+        "name": "Extract Analysis",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1010,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const { analysis, skill_type } = $json;\nreturn [{\n  json: {\n    task: `Adapt skill '${analysis.name}' to nova-core format. Category: ${analysis.category}.`,\n    context: { agent_id: 'prompter', prompt: `Adapt skill '${analysis.name}' for nova-core. Type: ${skill_type}.`, level: 2, domain: analysis.category }\n  }\n}];"
+        },
+        "id": "prepare-adapt-body",
+        "name": "Prepare Adapt Body",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1230,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://nova-core-backend-1:8000/api/v1/agents/runtime/dispatch",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "id": "phase2-adapt",
+        "name": "Phase 2: Adapt",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1450,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "sc",
+                "leftValue": "={{ $json.security_level }}",
+                "rightValue": "strict",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        },
+        "id": "security-gate",
+        "name": "Strict Security?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1670,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const analysis = $('Extract Analysis').first().json.analysis;\nreturn [{\n  json: {\n    task: `Security audit for skill '${analysis.name}'. Review: permissions, data access, injection risks.`,\n    context: { agent_id: 'critic-premortem', plan: `Security audit for '${analysis.name}'. Deps: ${JSON.stringify(analysis.dependencies)}`, level: 2 }\n  }\n}];"
+        },
+        "id": "prepare-sec-body",
+        "name": "Prepare Security Body",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1890,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://nova-core-backend-1:8000/api/v1/agents/runtime/dispatch",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "id": "phase3-security",
+        "name": "Phase 3: Security Gate",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2110,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const adapted = $('Phase 2: Adapt').first().json;\nconst adaptResult = adapted.result || adapted;\nlet secAudit = null;\ntry { const sa = $('Phase 3: Security Gate').first().json; secAudit = sa.result || sa; } catch(e) {}\n\nif (secAudit && secAudit.blockers && secAudit.blockers.length > 0) {\n  return [{ json: { status: 'blocked', reason: 'Security audit found blockers', blockers: secAudit.blockers } }];\n}\nreturn [{ json: { status: 'approved', adapted_definition: adaptResult.adapted_definition || adaptResult, analysis: $('Extract Analysis').first().json.analysis } }];"
+        },
+        "id": "phase4-register",
+        "name": "Phase 4: Register",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2330,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "bc",
+                "leftValue": "={{ $json.status }}",
+                "rightValue": "blocked",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        },
+        "id": "blocked-gate",
+        "name": "Blocked?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          2550,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const analysis = $('Extract Analysis').first().json.analysis;\nreturn [{\n  json: {\n    steps: [\n      { agent: 'code-reviewer', task: `Create agent definition for ${analysis.name}`, context: $('Phase 4: Register').first().json.adapted_definition },\n      { agent: 'prompter', task: `Generate system prompt for ${analysis.name}`, context: analysis }\n    ],\n    pattern: 'sequential'\n  }\n}];"
+        },
+        "id": "prepare-coord-body",
+        "name": "Prepare Coord Body",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2770,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://nova-core-backend-1:8000/api/v1/agents/runtime/coordinate",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "timeout": 120000
+          }
+        },
+        "id": "phase5-persist",
+        "name": "Phase 5: Persist",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2990,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const analysis = $('Extract Analysis').first().json.analysis;\nreturn [{ json: { status: 'completed', skill: { name: analysis.name, category: analysis.category, capabilities: analysis.capabilities }, registration: { success: true }, persistence: { knowledge_base: true }, timestamp: new Date().toISOString() } }];"
+        },
+        "id": "format-output",
+        "name": "Format Output",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3210,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "respond-webhook",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          3430,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {
+            "responseCode": 403
+          }
+        },
+        "id": "respond-blocked",
+        "name": "Respond Blocked",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          2770,
+          400
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Validate Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Input": {
+        "main": [
+          [
+            {
+              "node": "Prepare Scan Body",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Scan Body": {
+        "main": [
+          [
+            {
+              "node": "Phase 1: Pattern Scan",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Phase 1: Pattern Scan": {
+        "main": [
+          [
+            {
+              "node": "Extract Analysis",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Extract Analysis": {
+        "main": [
+          [
+            {
+              "node": "Prepare Adapt Body",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Adapt Body": {
+        "main": [
+          [
+            {
+              "node": "Phase 2: Adapt",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Phase 2: Adapt": {
+        "main": [
+          [
+            {
+              "node": "Strict Security?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Strict Security?": {
+        "main": [
+          [
+            {
+              "node": "Prepare Security Body",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Phase 4: Register",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Security Body": {
+        "main": [
+          [
+            {
+              "node": "Phase 3: Security Gate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Phase 3: Security Gate": {
+        "main": [
+          [
+            {
+              "node": "Phase 4: Register",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Phase 4: Register": {
+        "main": [
+          [
+            {
+              "node": "Blocked?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Blocked?": {
+        "main": [
+          [
+            {
+              "node": "Respond Blocked",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Prepare Coord Body",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Coord Body": {
+        "main": [
+          [
+            {
+              "node": "Phase 5: Persist",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Phase 5: Persist": {
+        "main": [
+          [
+            {
+              "node": "Format Output",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Output": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "active": false,
+    "settings": {
+      "executionOrder": "v1"
+    }
+  }
+]

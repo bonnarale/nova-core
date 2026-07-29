@@ -42,18 +42,18 @@ export function NovaChat({
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [greeting, setGreeting] = useState(GREETINGS[0]);
-  const { sessionId, setSessionId, userId, setUserId } = useAppStore();
+  const { sessionId, setSessionId, userId, user } = useAppStore();
 
   useEffect(() => {
     setGreeting(GREETINGS[Math.floor(Math.random() * GREETINGS.length)]);
-    // Initialize session_id and user_id if not set
+    // Initialize session_id if not set
     if (!sessionId) {
       setSessionId(crypto.randomUUID());
     }
-    if (!userId) {
-      setUserId(crypto.randomUUID());
-    }
-  }, [sessionId, userId, setSessionId, setUserId]);
+  }, [sessionId, setSessionId]);
+
+  // Use authenticated user's ID
+  const effectiveUserId = user?.user_id || userId;
 
   // Load conversation history on mount
   useEffect(() => {

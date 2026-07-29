@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents.agent_manager import AgentManager
+from app.command_center.approvals import ApprovalsManager
 from app.agents.builtins.planner_agent import PlannerAgent
 from app.agents.builtins.executor_agent import ExecutorAgent
 from app.agents.builtins.coder_agent import CoderAgent
@@ -18,6 +19,7 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.postgres import close_database, init_database
 from app.events import EventSystemFactory
+from app.security.factory import SecurityFactory
 from app.kernel import get_kernel, register_agent
 from app.learning.evolution_engine import EvolutionEngine
 from app.learning.outcome_tracker import InMemoryOutcomeStore
@@ -48,6 +50,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.redis = await init_redis(settings)
     app.state.chroma = ChromaService(settings)
     app.state.ollama = OllamaService(settings)
+
+    # Security Engine
+    security_engine = SecurityFactory.create_engine()
+    await security_engine.start()
+    app.state.security_engine = security_engine
 
     # Event System
     event_factory = EventSystemFactory(default_source="nova-core")
@@ -117,6 +124,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.tool_manager = tool_manager
     app.state.tool_factory = tool_factory
     app.state.tool_runtime = tool_runtime
+    
+    # API-level metrics and tracing (global, accumulates across all requests)
+    from app.api.metrics import APIMetricsCollector
+    from app.api.tracing import APITracer
+
+    api_metrics = APIMetricsCollector()
+    api_tracer = APITracer()
+    app.state.api_metrics = api_metrics
+    app.state.api_tracer = api_tracer
+    
+    # ApprovalsManager (shared between CognitiveEngine and API endpoints)
+    approvals_manager = ApprovalsManager()
+    app.state.approvals_manager = approvals_manager
+
     cognitive_engine = CognitiveEngine(
         goal_manager=goal_manager,
         task_manager=task_manager,
@@ -126,6 +147,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         semantic_memory=semantic_memory,
         event_publisher=event_bus,
         evolution_engine=evolution_engine,
+        approvals_manager=approvals_manager,
     )
     app.state.cognitive_engine = cognitive_engine
 
@@ -137,9 +159,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             profile = await profile_memory.get_profile(default_user_id)
             if profile:
                 await semantic_memory.auto_index(profile=profile)
-        logger.info("Semantic memory auto-index complete")
+        import logging as _logging
+        _logging.getLogger("nova.startup").info("Semantic memory auto-index complete")
     except Exception as exc:
-        logger.warning("Semantic memory auto-index failed: %s", exc)
+        import logging as _logging
+        _logging.getLogger("nova.startup").warning("Semantic memory auto-index failed: %s", exc)
 
     # Modelo y Kernel
     gateway = ModelGateway(settings)
@@ -152,10 +176,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     )
     # Register LLM-powered builtin agents
-    register_agent(PlannerAgent(gateway=gateway))
-    register_agent(ExecutorAgent(gateway=gateway))
-    register_agent(CoderAgent(gateway=gateway))
-    register_agent(ResearchAgent(gateway=gateway))
+    planner = PlannerAgent(gateway=gateway)
+    executor = ExecutorAgent(gateway=gateway)
+    coder = CoderAgent(gateway=gateway)
+    researcher = ResearchAgent(gateway=gateway)
+
+    register_agent(planner)
+    register_agent(executor)
+    register_agent(coder)
+    register_agent(researcher)
+
+    # Also register in AgentManager so /api/v1/agents can list them
+    agent_manager.register("planner", planner)
+    agent_manager.register("executor", executor)
+    agent_manager.register("coder", coder)
+    agent_manager.register("researcher", researcher)
 
     kernel = get_kernel(settings)
     await kernel.start()
@@ -201,6 +236,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+from app.api.middleware import (
+    APIMetricsMiddleware,
+    ExceptionHandlingMiddleware,
+    RequestIDMiddleware,
+    TimingMiddleware,
+)
+
+# Middleware order: last added = outermost (runs first on request, last on response).
+# TimingMiddleware must be inner relative to APIMetricsMiddleware so that
+# request.state.response_time_ms is set before APIMetricsMiddleware reads it.
+app.add_middleware(TimingMiddleware)
+app.add_middleware(APIMetricsMiddleware)
+app.add_middleware(RequestIDMiddleware)
+app.add_middleware(ExceptionHandlingMiddleware)
 
 
 @app.get("/", summary="Root endpoint")

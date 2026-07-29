@@ -38,12 +38,17 @@ def set_dependencies(model_gateway: Any = None) -> None:
     _model_gateway = model_gateway
 
 
-def _get_components() -> dict[str, Any]:
+def _get_components(request: Request | None = None) -> dict[str, Any]:
     global _components
     if _components is None:
         from app.command_center.factory import CommandCenterFactory
 
         _components = CommandCenterFactory.create_all()
+    # Override approvals with the shared instance from app.state if available
+    if request is not None:
+        shared_approvals = getattr(request.app.state, "approvals_manager", None)
+        if shared_approvals is not None:
+            _components["approvals"] = shared_approvals
     return _components
 
 
@@ -211,7 +216,25 @@ async def chat(req: ChatRequest, request: Request) -> dict[str, Any]:
                 agent_id = "meta"
             elif hasattr(state.decision, 'agent_id') and state.decision.agent_id:
                 agent_id = state.decision.agent_id
-        
+
+            # Check if approval is required (gate intercepted the action)
+            if state.execution_result and state.execution_result.get("approval_required"):
+                approval_id = state.execution_result.get("approval_id")
+                approval_category = state.execution_result.get("approval_category")
+                message_text = state.execution_result.get("message", "Approval required")
+                return {
+                    "response": message_text,
+                    "session_id": session_id,
+                    "task_id": None,
+                    "actions_taken": [],
+                    "objectives": [],
+                    "projects": [],
+                    "tasks": [],
+                    "approval_required": True,
+                    "approval_id": approval_id,
+                    "approval_category": approval_category,
+                }
+
         logger.info("Chat: routing to agent=%s", agent_id)
         
         kernel_result = await kernel.run_agent(
@@ -409,28 +432,66 @@ async def list_backlog() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 @router.get("/approvals")
-async def list_approvals() -> list[dict[str, Any]]:
-    comps = _get_components()
+async def list_approvals(request: Request) -> list[dict[str, Any]]:
+    comps = _get_components(request)
     return [a.__dict__ for a in comps["approvals"].get_pending()]
 
 
 @router.get("/approvals/history")
-async def approval_history() -> list[dict[str, Any]]:
-    comps = _get_components()
+async def approval_history(request: Request) -> list[dict[str, Any]]:
+    comps = _get_components(request)
     return [a.__dict__ for a in comps["approvals"].get_resolved()]
 
 
 # ---------------------------------------------------------------------------
-# 9. Approve
+# 9. Approve — and re-execute the original action
 # ---------------------------------------------------------------------------
 
 @router.post("/approvals/{approval_id}/approve")
-async def approve_item(approval_id: str) -> dict[str, Any]:
-    comps = _get_components()
-    result = comps["approvals"].approve(approval_id, reviewer="web_user")
-    if result is None:
+async def approve_item(approval_id: str, request: Request) -> dict[str, Any]:
+    comps = _get_components(request)
+    approval = comps["approvals"].approve(approval_id, reviewer="web_user")
+    if approval is None:
         raise HTTPException(status_code=404, detail="Approval not found")
-    return result.__dict__
+
+    # Re-execute the original action that was gated
+    execution_result = None
+    metadata = approval.metadata or {}
+    original_payload = metadata.get("payload", {})
+    action_type = approval.action_type
+
+    cognitive_engine = getattr(request.app.state, "cognitive_engine", None)
+    if cognitive_engine is not None and original_payload:
+        # Reconstruct the original message from the payload
+        original_message = (
+            original_payload.get("objective")
+            or original_payload.get("task")
+            or original_payload.get("query")
+            or approval.description
+        )
+        session_id = original_payload.get("session_id")
+        user_id = original_payload.get("user_id")
+
+        logger.info(
+            "Approval %s: re-executing action %s with skip_approval_check=True",
+            approval_id, action_type,
+        )
+        try:
+            state = await cognitive_engine.process(
+                raw_input=original_message,
+                user_id=user_id,
+                session_id=session_id,
+                skip_approval_check=True,
+            )
+            execution_result = state.execution_result
+        except Exception as exc:
+            logger.error("Approval re-execution failed: %s", exc, exc_info=True)
+            execution_result = {"error": str(exc)}
+
+    return {
+        "approval": approval.__dict__,
+        "execution_result": execution_result,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -438,8 +499,8 @@ async def approve_item(approval_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @router.post("/approvals/{approval_id}/reject")
-async def reject_item(approval_id: str) -> dict[str, Any]:
-    comps = _get_components()
+async def reject_item(approval_id: str, request: Request) -> dict[str, Any]:
+    comps = _get_components(request)
     result = comps["approvals"].reject(approval_id, reviewer="web_user")
     if result is None:
         raise HTTPException(status_code=404, detail="Approval not found")
@@ -508,11 +569,43 @@ async def get_memory() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @router.get("/observability")
-async def get_observability() -> dict[str, Any]:
-    comps = _get_components()
+async def get_observability(request: Request) -> dict[str, Any]:
+    comps = _get_components(request)
+    
+    # Real API metrics from the global collector
+    api_metrics = getattr(request.app.state, "api_metrics", None)
+    api_tracer = getattr(request.app.state, "api_tracer", None)
+    
+    api_stats = api_metrics.get_statistics() if api_metrics else {}
+    api_traces = api_tracer.get_recent_traces(limit=50) if api_tracer else []
+    
+    # Compute latency percentiles from the rolling window
+    latency_percentiles = {}
+    if api_metrics and hasattr(api_metrics, '_latencies'):
+        latencies = api_metrics._latencies
+        if latencies:
+            sorted_lat = sorted(latencies)
+            n = len(sorted_lat)
+            latency_percentiles = {
+                "p50": round(sorted_lat[n // 2], 2),
+                "p95": round(sorted_lat[int(n * 0.95)], 2),
+                "p99": round(sorted_lat[int(n * 0.99)], 2),
+            }
+    
     return {
         "metrics": comps["metrics"].snapshot(),
-        "traces": comps["tracing"].to_dict(),
+        "api_metrics": {
+            "total_requests": api_stats.get("total_requests", 0),
+            "total_errors": api_stats.get("total_errors", 0),
+            "error_rate": api_stats.get("error_rate", 0.0),
+            "average_latency_ms": api_stats.get("average_latency_ms", 0.0),
+            "latency_percentiles": latency_percentiles,
+            "endpoint_usage": api_stats.get("endpoint_usage", {}),
+        },
+        "traces": {
+            "command_center": comps["tracing"].to_dict(),
+            "api_recent": api_traces,
+        },
         "health": comps["lifecycle"].to_dict(),
     }
 
@@ -522,12 +615,39 @@ async def get_observability() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @router.get("/tools")
-async def get_tools() -> dict[str, Any]:
-    comps = _get_components()
+async def get_tools(request: Request) -> dict[str, Any]:
+    comps = _get_components(request)
+    
+    # Real tool execution data from ToolRuntime
+    tool_runtime = getattr(request.app.state, "tool_runtime", None)
+    tool_manager = getattr(request.app.state, "tool_manager", None)
+    
+    tool_catalog = []
+    tool_metrics_snapshot = {}
+    tool_traces_recent = []
+    
+    if tool_runtime:
+        tool_metrics_snapshot = tool_runtime.metrics.snapshot() if hasattr(tool_runtime, 'metrics') else {}
+        if hasattr(tool_runtime, 'tracer'):
+            tool_traces_recent = tool_runtime.tracer.to_dict()[:20]  # last 20
+    
+    if tool_manager:
+        tool_catalog = [
+            {
+                "name": t.name,
+                "description": t.description,
+                "category": t.category,
+                "version": t.version,
+            }
+            for t in tool_manager.list_tools()
+        ]
+    
     return {
+        "catalog": tool_catalog,
+        "metrics": tool_metrics_snapshot,
+        "recent_executions": tool_traces_recent,
         "orchestrator": comps["orchestrator"].to_dict(),
         "autonomy": comps["autonomy"].to_dict(),
-        "optimization": [o.__dict__ for o in comps["optimization"].list_all()],
     }
 
 

@@ -23,3 +23,9 @@ coverage/
 data/
 volumes/
 
+
+# Temp artifacts and local indexes
+tmp/
+.codegraph/
+nul
+frontend/tsconfig.tsbuildinfo

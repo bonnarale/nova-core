@@ -49,153 +49,179 @@ class CoordinateRequest(BaseModel):
 
 
 # ------------------------------------------------------------------
-# Existing endpoints (backward compatible)
+# CRUD endpoints — adapted to AgentManager's real interface
 # ------------------------------------------------------------------
 
 
 @router.get("")
 async def list_agents(request: Request) -> dict:
-    """List all registered agent definitions."""
+    """List all registered runtime agents."""
     manager: AgentManager = request.app.state.agent_manager
-    definitions = await manager.list_agent_definitions()
     runtime_ids = [a.agent_id for a in manager.list_runtime_agents()]
     return {
-        "definitions": definitions,
         "runtime_agents": runtime_ids,
-        "tracing": manager.tracer.to_dict(),
-        "metrics": manager.metrics.snapshot(),
+        "count": len(runtime_ids),
     }
 
 
-@router.get("/{agent_id}")
-async def get_agent(agent_id: str, request: Request) -> dict:
-    """Get an agent definition by ID."""
+@router.get("/available")
+async def list_available_agents(request: Request) -> list[dict]:
+    """List all available agents with their details for task assignment."""
     manager: AgentManager = request.app.state.agent_manager
-    definition = await manager.get_agent_definition(agent_id)
-    runtime = manager.get_runtime_agent(agent_id)
-    return {
-        "definition": definition,
-        "runtime_available": runtime is not None,
-    }
-
-
-@router.post("", status_code=status.HTTP_201_CREATED)
-async def create_agent(body: CreateAgentRequest, request: Request) -> dict:
-    """Create a new agent definition."""
-    manager: AgentManager = request.app.state.agent_manager
-    result = await manager.create_agent_definition(
-        agent_id=body.id,
-        name=body.name,
-        role=body.role,
-        description=body.description,
-        system_prompt=body.system_prompt,
-        allowed_tools=body.allowed_tools,
-        memory_scope=body.memory_scope,
-        permissions=body.permissions,
-        supported_models=body.supported_models,
-    )
-    if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Agent definition could not be created (may already exist)",
-        )
-    return result
-
-
-@router.patch("/{agent_id}")
-async def update_agent(agent_id: str, body: UpdateAgentRequest, request: Request) -> dict:
-    """Update an agent definition."""
-    manager: AgentManager = request.app.state.agent_manager
-    updates = body.model_dump(exclude_none=True)
-    if not updates:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="No fields to update",
-        )
-    result = await manager.update_agent_definition(agent_id, **updates)
-    if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent definition not found",
-        )
-    return result
-
-
-@router.delete("/{agent_id}", status_code=status.HTTP_200_OK)
-async def delete_agent(agent_id: str, request: Request) -> dict[str, str]:
-    """Delete an agent definition."""
-    manager: AgentManager = request.app.state.agent_manager
-    deleted = await manager.delete_agent_definition(agent_id)
-    if not deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Agent definition not found",
-        )
-    return {"status": "deleted"}
-
-
-# ------------------------------------------------------------------
-# Chapter 14 — Runtime endpoints
-# ------------------------------------------------------------------
-
-
-@router.post("/register", status_code=status.HTTP_201_CREATED)
-async def register_agent(body: CreateAgentRequest, request: Request) -> dict:
-    """Register an agent definition."""
-    manager: AgentManager = request.app.state.agent_manager
-    result = await manager.create_agent_definition(
-        agent_id=body.id,
-        name=body.name,
-        role=body.role,
-        description=body.description,
-        system_prompt=body.system_prompt,
-        allowed_tools=body.allowed_tools,
-        memory_scope=body.memory_scope,
-        permissions=body.permissions,
-        supported_models=body.supported_models,
-    )
-    if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Agent could not be registered",
-        )
-    return {"registered": True, "agent": result}
+    agents = []
+    # Access the internal _agents dict to get actual agent objects
+    for agent_id, agent in manager._agents.items():
+        # Try to get definition from the agent object
+        definition = getattr(agent, "definition", None)
+        if definition:
+            agents.append({
+                "id": agent_id,
+                "name": getattr(definition, "name", agent_id),
+                "role": getattr(definition, "role", "unknown"),
+                "description": getattr(definition, "description", ""),
+            })
+        else:
+            agents.append({
+                "id": agent_id,
+                "name": agent_id,
+                "role": "agent",
+                "description": f"Agent: {agent_id}",
+            })
+    return agents
 
 
 @router.get("/health")
 async def health_check(request: Request) -> dict:
-    """Health check for all registered agents."""
+    """Health check for all registered agents.
+
+    AgentManager agents don't expose a health() method, so we report
+    presence as the health signal.
+    """
     manager: AgentManager = request.app.state.agent_manager
     results = {}
     for agent in manager.list_runtime_agents():
-        try:
-            h = await agent.health()
-            results[agent.agent_id] = h
-        except Exception as exc:
-            results[agent.agent_id] = {"status": "error", "error": str(exc)}
+        results[agent.agent_id] = {"status": "registered"}
     return {"agents": results}
 
 
 @router.get("/capabilities")
 async def get_capabilities(request: Request) -> dict:
-    """Get capabilities of all registered agents."""
+    """Get capabilities of all registered agents.
+
+    AgentManager agents don't expose a definition object, so we report
+    agent_id as the only known attribute.
+    """
     manager: AgentManager = request.app.state.agent_manager
     caps = {}
     for agent in manager.list_runtime_agents():
-        defn = agent.definition
         caps[agent.agent_id] = {
-            "role": defn.role,
-            "allowed_tools": list(defn.allowed_tools),
-            "permissions": dict(defn.permissions),
-            "supported_models": list(defn.supported_models),
+            "agent_id": agent.agent_id,
         }
     return {"capabilities": caps}
+
+
+@router.get("/{agent_id}")
+async def get_agent(agent_id: str, request: Request) -> dict:
+    """Get an agent by ID.
+
+    Returns runtime presence info. AgentManager does not store
+    definitions, so definition fields are not available.
+    """
+    manager: AgentManager = request.app.state.agent_manager
+    agent = manager.get_runtime_agent(agent_id)
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{agent_id}' not found",
+        )
+    return {
+        "agent_id": agent.agent_id,
+        "runtime_available": True,
+    }
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_agent(body: CreateAgentRequest, request: Request) -> dict:
+    """Register a new agent at runtime.
+
+    AgentManager.register() requires an agent object with an execute()
+    method — dynamic creation from JSON definitions is not supported.
+    Use POST /agents/{agent_id}/register-with-sdk for programmatic registration,
+    or register agents in main.py during startup.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail=(
+            "Dynamic agent creation from JSON is not supported. "
+            "AgentManager.register() requires an agent object with an execute() method. "
+            "Register agents programmatically at startup via main.py."
+        ),
+    )
+
+
+@router.patch("/{agent_id}")
+async def update_agent(agent_id: str, body: UpdateAgentRequest, request: Request) -> dict:
+    """Update an agent.
+
+    AgentManager does not support updating registered agents.
+    Agents are immutable once registered — unregister and re-register
+    with a new instance to change behavior.
+    """
+    manager: AgentManager = request.app.state.agent_manager
+    agent = manager.get_runtime_agent(agent_id)
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{agent_id}' not found",
+        )
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail=(
+            "AgentManager does not support in-place updates. "
+            "Unregister the agent and register a new instance instead."
+        ),
+    )
+
+
+@router.delete("/{agent_id}", status_code=status.HTTP_200_OK)
+async def delete_agent(agent_id: str, request: Request) -> dict[str, str]:
+    """Unregister an agent by ID."""
+    manager: AgentManager = request.app.state.agent_manager
+    agent = manager.get_runtime_agent(agent_id)
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{agent_id}' not found",
+        )
+    manager.unregister(agent_id)
+    return {"status": "deleted", "agent_id": agent_id}
+
+
+@router.post("/register", status_code=status.HTTP_201_CREATED)
+async def register_agent(body: CreateAgentRequest, request: Request) -> dict:
+    """Register an agent at runtime.
+
+    Same constraint as POST /agents — requires an agent object.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail=(
+            "Dynamic agent registration from JSON is not supported. "
+            "AgentManager.register() requires an agent object with an execute() method. "
+            "Register agents programmatically at startup via main.py."
+        ),
+    )
+
+
+# ------------------------------------------------------------------
+# Runtime endpoints — depend on AgentRuntime (not yet initialized)
+# ------------------------------------------------------------------
 
 
 @router.post("/runtime/dispatch")
 async def runtime_dispatch(body: DispatchRequest, request: Request) -> dict:
     """Dispatch a task via the AgentRuntime."""
-    runtime: AgentRuntime | None = getattr(request.app.state, "agent_runtime", None)
+    runtime = getattr(request.app.state, "agent_runtime", None)
     if runtime is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -213,7 +239,7 @@ async def runtime_dispatch(body: DispatchRequest, request: Request) -> dict:
 @router.post("/runtime/coordinate")
 async def runtime_coordinate(body: CoordinateRequest, request: Request) -> dict:
     """Coordinate multi-agent execution via the AgentRuntime."""
-    runtime: AgentRuntime | None = getattr(request.app.state, "agent_runtime", None)
+    runtime = getattr(request.app.state, "agent_runtime", None)
     if runtime is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -230,7 +256,7 @@ async def runtime_coordinate(body: CoordinateRequest, request: Request) -> dict:
 @router.get("/runtime/metrics")
 async def runtime_metrics(request: Request) -> dict:
     """Get runtime metrics."""
-    runtime: AgentRuntime | None = getattr(request.app.state, "agent_runtime", None)
+    runtime = getattr(request.app.state, "agent_runtime", None)
     if runtime is None:
         return {"metrics": {}}
     return {"metrics": runtime.metrics.snapshot()}
@@ -239,7 +265,7 @@ async def runtime_metrics(request: Request) -> dict:
 @router.get("/runtime/traces")
 async def runtime_traces(request: Request) -> dict:
     """Get runtime execution traces."""
-    runtime: AgentRuntime | None = getattr(request.app.state, "agent_runtime", None)
+    runtime = getattr(request.app.state, "agent_runtime", None)
     if runtime is None:
         return {"traces": []}
     return {"traces": runtime.tracer.to_dict()}
@@ -248,7 +274,7 @@ async def runtime_traces(request: Request) -> dict:
 @router.get("/runtime/scheduler")
 async def runtime_scheduler(request: Request) -> dict:
     """Get scheduler status."""
-    runtime: AgentRuntime | None = getattr(request.app.state, "agent_runtime", None)
+    runtime = getattr(request.app.state, "agent_runtime", None)
     if runtime is None:
         return {"scheduler": {}}
     return {"scheduler": runtime.scheduler.to_dict()}
@@ -257,7 +283,7 @@ async def runtime_scheduler(request: Request) -> dict:
 @router.post("/runtime/cancel/{task_id}")
 async def runtime_cancel(task_id: str, request: Request) -> dict:
     """Cancel a scheduled task."""
-    runtime: AgentRuntime | None = getattr(request.app.state, "agent_runtime", None)
+    runtime = getattr(request.app.state, "agent_runtime", None)
     if runtime is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

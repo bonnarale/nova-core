@@ -34,16 +34,8 @@ function priorityLabel(priority: number): string {
 }
 
 export default function GoalsPage() {
-  const { userId, setUserId } = useAppStore();
-  const [effectiveUserId, setEffectiveUserId] = useState(userId);
-
-  useEffect(() => {
-    if (!effectiveUserId) {
-      const newUserId = crypto.randomUUID();
-      setUserId(newUserId);
-      setEffectiveUserId(newUserId);
-    }
-  }, [effectiveUserId, setUserId]);
+  const { user } = useAppStore();
+  const effectiveUserId = user?.user_id;
 
   const { data: goals, loading, error, refetch } = useApi<Goal[]>(
     effectiveUserId ? `/api/v1/goals/${effectiveUserId}` : "",
