@@ -1,6 +1,8 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const API_PREFIX = "/api/v1";
 
+import { globalToast } from "@/lib/toast";
+
 export class NovaAPI {
   private baseUrl: string;
   private headers: Record<string, string>;
@@ -30,7 +32,9 @@ export class NovaAPI {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || `HTTP ${res.status}`);
+      const msg = err.detail || `HTTP ${res.status}`;
+      globalToast.error(`API Error: ${msg}`);
+      throw new Error(msg);
     }
     return res.json();
   }
@@ -58,7 +62,10 @@ export class NovaAPI {
       headers: { ...this.headers, Accept: "text/event-stream" },
       body: body ? JSON.stringify(body) : undefined,
     });
-    if (!res.ok) throw new Error(`Stream error: ${res.status}`);
+    if (!res.ok) {
+      globalToast.error(`Stream error: ${res.status}`);
+      throw new Error(`Stream error: ${res.status}`);
+    }
     return res.body!;
   }
 
@@ -182,4 +189,19 @@ export class NovaAPI {
   profile = { get: (uid: string) => this.get(`/profile/${uid}`) };
 }
 
-export const api = new NovaAPI();
+export const novaAPI = new NovaAPI();
+// Backward compatibility alias
+export const api = novaAPI;
+
+/**
+ * Sync the API client with the current auth token.
+ * Call this when token changes (login/logout).
+ */
+export function syncAuthToken(token: string) {
+  if (token) {
+    novaAPI.setAuthToken(token);
+  } else {
+    // Clear the auth header by resetting headers
+    novaAPI.setAuthToken("");
+  }
+}

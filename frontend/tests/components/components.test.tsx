@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { BarChart, LineChart, PieChart } from "@/components/charts";
 import { MessageBubble, TypingIndicator } from "@/components/chat";
 import { WorkflowCanvas, WorkflowToolbar } from "@/components/workflow";
-import { PageContainer, Section, LoadingScreen, ErrorFallback, ConfirmDialog, Toast } from "@/components/common";
+import { PageContainer, Section, LoadingScreen, ErrorBoundary, ConfirmDialog, ToastProvider } from "@/components/common";
 
 describe("Chart Components", () => {
   describe("BarChart", () => {
@@ -115,13 +115,31 @@ describe("Common Components", () => {
     });
   });
 
-  describe("ErrorFallback", () => {
-    it("renders error message", () => {
-      const error = new Error("Test error");
-      render(<ErrorFallback error={error} reset={() => {}} />);
+  describe("ErrorBoundary", () => {
+    it("renders children when no error", () => {
+      render(
+        <ErrorBoundary>
+          <div>Child content</div>
+        </ErrorBoundary>
+      );
+      expect(screen.getByText("Child content")).toBeTruthy();
+    });
+
+    it("renders fallback UI when child throws", () => {
+      const ThrowingChild = () => {
+        throw new Error("Test crash");
+      };
+      // Suppress console.error for this test
+      const spy = jest.spyOn(console, "error").mockImplementation();
+      render(
+        <ErrorBoundary>
+          <ThrowingChild />
+        </ErrorBoundary>
+      );
       expect(screen.getByText("Something went wrong")).toBeTruthy();
-      expect(screen.getByText("Test error")).toBeTruthy();
+      expect(screen.getByText("Test crash")).toBeTruthy();
       expect(screen.getByText("Try again")).toBeTruthy();
+      spy.mockRestore();
     });
   });
 
@@ -138,10 +156,14 @@ describe("Common Components", () => {
     });
   });
 
-  describe("Toast", () => {
-    it("renders message", () => {
-      render(<Toast message="Operation completed" />);
-      expect(screen.getByText("Operation completed")).toBeTruthy();
+  describe("ToastProvider", () => {
+    it("renders children", () => {
+      render(
+        <ToastProvider>
+          <div>App content</div>
+        </ToastProvider>
+      );
+      expect(screen.getByText("App content")).toBeTruthy();
     });
   });
 });
