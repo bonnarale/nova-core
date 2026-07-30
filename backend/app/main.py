@@ -255,7 +255,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
 
         # Register handler with scheduler executor
-        scheduler._executor.register_handler(
+        scheduler._engine._executor.register_handler(
             "autonomous_review", autonomous_handler.handle
         )
 
