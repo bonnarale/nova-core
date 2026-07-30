@@ -329,7 +329,8 @@ class NovaWebAPI {
   async fetchRecentActivity(limit: number = 20): Promise<ActivityEntry[]> {
     try {
       const response = await this.client.get<{ entries: ActivityEntry[]; total: number }>(
-        `/api/v1/activity/recent?limit=${limit}`
+        `/activity/recent`,
+        { limit: String(limit) }
       );
       return response.entries || [];
     } catch {
