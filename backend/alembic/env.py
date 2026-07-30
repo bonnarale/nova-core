@@ -21,7 +21,7 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import get_settings
-from app.db.models import Base, ConversationMessage, ConversationSession
+from app.db.models import Base, ConversationMessage, ConversationSession, ProjectORM
 
 config = context.config
 settings = get_settings()
@@ -33,7 +33,8 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    url = settings.database_url
+    # Use database_url_raw (with password) for actual connection
+    url = settings.database_url_raw
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -54,8 +55,9 @@ def do_run_migrations(connection):
 
 
 async def run_async_migrations() -> None:
+    # Use database_url_raw (with password) for actual connection
     connectable = create_async_engine(
-        settings.database_url,
+        settings.database_url_raw,
         poolclass=pool.NullPool,
     )
     async with connectable.connect() as connection:

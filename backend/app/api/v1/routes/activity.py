@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
+
+from app.api.dependencies import get_current_token
+from app.security.models import Token
 
 router = APIRouter(prefix="/activity", tags=["activity"])
 
@@ -67,10 +71,11 @@ async def list_activity(
 async def list_recent_activity(
     request: Request,
     limit: int = Query(20, ge=1, le=100),
+    token: Token = Depends(get_current_token),
 ) -> ActivityListResponse:
-    """Alias for list_activity — backward compatibility."""
+    """Alias for list_activity — filtered by authenticated user."""
     repo = _get_activity_repo(request)
-    entries = await repo.list_recent(limit=limit)
+    entries = await repo.list_by_user(user_id=UUID(token.user_id), limit=limit)
     return ActivityListResponse(
         entries=[
             ActivityEntry(

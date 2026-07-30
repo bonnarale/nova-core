@@ -1,5 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.api.dependencies import get_current_token
 from app.api.v1.routes.agents import router as agents_router
 from app.api.v1.routes.auth import router as auth_router
 from app.api.v1.routes.autonomy import router as autonomy_router
@@ -31,10 +32,14 @@ from app.api.v1.routes.user_profile import router as user_profile_router
 from app.api.v1.routes.workflows import router as workflows_router
 from app.api.v1.routes.activity import router as activity_router
 
-router = APIRouter()
+# Global auth dependency — protects ALL routes by default
+router = APIRouter(
+    dependencies=[Depends(get_current_token)],
+)
 
 router.include_router(agents_router)
-router.include_router(auth_router)
+# Public routes — no auth required
+router.include_router(auth_router, tags=["auth"], dependencies=[])
 router.include_router(autonomy_router)
 router.include_router(autonomy_system_router)
 router.include_router(command_center_router)
@@ -44,12 +49,14 @@ router.include_router(enterprise_router)
 router.include_router(events_router)
 router.include_router(future_router)
 router.include_router(goals_router)
-router.include_router(health_router, tags=["health"])
+# Public routes — no auth required
+router.include_router(health_router, tags=["health"], dependencies=[])
 router.include_router(integration_router)
 router.include_router(kernel_router)
 router.include_router(memory_router, tags=["memory"])
 router.include_router(n8n_integration_router)
-router.include_router(nova_web_router)
+# Public routes — no auth required (uses its own auth flow)
+router.include_router(nova_web_router, tags=["nova-web"], dependencies=[])
 router.include_router(observability_router)
 router.include_router(performance_router)
 router.include_router(plugins_router)

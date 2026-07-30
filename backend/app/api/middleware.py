@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from typing import Any, Callable
@@ -9,6 +10,8 @@ from typing import Any, Callable
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+
+logger = logging.getLogger(__name__)
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
@@ -83,6 +86,8 @@ class ExceptionHandlingMiddleware(BaseHTTPMiddleware):
         try:
             return await call_next(request)
         except Exception as exc:
+            # Log full exception server-side only — never expose to clients
+            logger.error("Unhandled exception: %s", exc, exc_info=True)
             request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
             return JSONResponse(
                 status_code=500,
@@ -90,7 +95,7 @@ class ExceptionHandlingMiddleware(BaseHTTPMiddleware):
                     "success": False,
                     "data": None,
                     "metadata": {},
-                    "errors": [{"code": "internal_error", "message": str(exc)}],
+                    "errors": [{"code": "internal_error", "message": "Internal server error"}],
                     "request_id": request_id,
                 },
             )

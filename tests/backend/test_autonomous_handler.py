@@ -217,7 +217,7 @@ class TestAutonomousReviewHandler:
             goal_id=goal.id,
             goal_title=goal.title,
             goal_priority=goal.priority,
-            reason="executor crashed",
+            reason="Execution failed",
         )
 
     @pytest.mark.asyncio
@@ -266,7 +266,7 @@ class TestAutonomousReviewHandler:
             user_id=deps["user_id"],
             action="reviewed",
             status="failed",
-            reason="Failed to fetch goals: db down",
+            reason="Failed to fetch goals",
         )
 
     @pytest.mark.asyncio

@@ -58,12 +58,13 @@ class AutonomousReviewHandler:
                 self._user_id, limit=self._max_goals
             )
         except Exception as exc:
-            logger.error("Failed to fetch goals: %s", exc)
+            # Log full exception server-side only — never expose to clients
+            logger.error("Failed to fetch goals: %s", exc, exc_info=True)
             await self._activity_repo.create(
                 user_id=self._user_id,
                 action="reviewed",
                 status="failed",
-                reason=f"Failed to fetch goals: {exc}",
+                reason="Failed to fetch goals",
             )
             return {"executed": 0, "skipped": 0, "blocked": 0, "failed": 1}
 
@@ -84,7 +85,8 @@ class AutonomousReviewHandler:
                 result = await self._process_goal(goal)
                 summary[result] += 1
             except Exception as exc:
-                logger.error("Goal %s processing failed: %s", goal.id, exc)
+                # Log full exception server-side only — never expose to clients
+                logger.error("Goal %s processing failed: %s", goal.id, exc, exc_info=True)
                 summary["failed"] += 1
                 await self._activity_repo.create(
                     user_id=self._user_id,
@@ -93,7 +95,7 @@ class AutonomousReviewHandler:
                     goal_id=goal.id,
                     goal_title=goal.title,
                     goal_priority=goal.priority,
-                    reason=str(exc),
+                    reason="Execution failed",
                 )
 
         logger.info("Autonomous cycle completed: %s", summary)
@@ -187,7 +189,8 @@ class AutonomousReviewHandler:
                 self._autonomy_manager.governor.end_action()
                 raise exc
         except Exception as exc:
-            logger.error("Goal %s execution failed: %s", goal.id, exc)
+            # Log full exception server-side only — never expose to clients
+            logger.error("Goal %s execution failed: %s", goal.id, exc, exc_info=True)
             await self._activity_repo.create(
                 user_id=self._user_id,
                 action="executed",
@@ -195,13 +198,13 @@ class AutonomousReviewHandler:
                 goal_id=goal.id,
                 goal_title=goal.title,
                 goal_priority=goal.priority,
-                reason=str(exc),
+                reason="Execution failed",
             )
             await self._publish_event(
                 event_type="autonomous.action.failed",
                 goal=goal,
                 status="failed",
-                error=str(exc),
+                error="Execution failed",
             )
             return "failed"
 

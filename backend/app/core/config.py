@@ -33,6 +33,20 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
+        """Database URL with hidden password — safe for logging/display."""
+        url = URL.create(
+            drivername="postgresql+asyncpg",
+            username=self.postgres_user,
+            password=self.postgres_password,
+            host=self.postgres_host,
+            port=self.postgres_port,
+            database=self.postgres_db,
+        )
+        return url.render_as_string(hide_password=True)
+
+    @property
+    def database_url_raw(self) -> str:
+        """Database URL with password — for actual connection only."""
         url = URL.create(
             drivername="postgresql+asyncpg",
             username=self.postgres_user,
