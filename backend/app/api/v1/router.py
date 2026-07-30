@@ -20,6 +20,7 @@ from app.api.v1.routes.nova_web import router as nova_web_router
 from app.api.v1.routes.observability import router as observability_router
 from app.api.v1.routes.performance import router as performance_router
 from app.api.v1.routes.plugins import router as plugins_router
+from app.api.v1.routes.projects import router as projects_router
 from app.api.v1.routes.resilience import router as resilience_router
 from app.api.v1.routes.scaling import router as scaling_router
 from app.api.v1.routes.scheduler import router as scheduler_router
@@ -28,6 +29,7 @@ from app.api.v1.routes.tasks import router as tasks_router
 from app.api.v1.routes.tools import router as tools_router
 from app.api.v1.routes.user_profile import router as user_profile_router
 from app.api.v1.routes.workflows import router as workflows_router
+from app.api.v1.routes.activity import router as activity_router
 
 router = APIRouter()
 
@@ -51,6 +53,7 @@ router.include_router(nova_web_router)
 router.include_router(observability_router)
 router.include_router(performance_router)
 router.include_router(plugins_router)
+router.include_router(projects_router)
 router.include_router(resilience_router)
 router.include_router(scaling_router)
 router.include_router(scheduler_router)
@@ -59,3 +62,4 @@ router.include_router(tasks_router)
 router.include_router(tools_router)
 router.include_router(user_profile_router)
 router.include_router(workflows_router)
+router.include_router(activity_router)

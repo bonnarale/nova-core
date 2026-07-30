@@ -2,7 +2,8 @@
 
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text
+import sqlalchemy as sa
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, backref, relationship
 from sqlalchemy.sql import func
@@ -78,6 +79,68 @@ class UserProfile(Base):
         server_default=func.now(),
         onupdate=func.now(),
         nullable=False,
+    )
+
+
+class ProjectORM(Base):
+    __tablename__ = "projects"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True, default="")
+    objective_id = Column(String, nullable=True)
+    goal_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("goals.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    workflow_id = Column(String, nullable=True)
+    status = Column(String(20), nullable=False, default="planning")
+    progress = Column(Float, nullable=False, default=0.0)
+    owner = Column(String(255), nullable=True, default="")
+    budget = Column(JSONB, nullable=True, default=dict)
+    decisions = Column(JSONB, nullable=True, default=list)
+    phases = Column(JSONB, nullable=True, default=list)
+    milestones = Column(JSONB, nullable=True, default=list)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class ActivityLog(Base):
+    __tablename__ = "activity_log"
+
+    __table_args__ = (
+        Index("ix_activity_log_user_created", "user_id", "created_at"),
+        Index("ix_activity_log_goal", "goal_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    goal_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("goals.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("user_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    action = Column(String(50), nullable=False)
+    status = Column(String(20), nullable=False)
+    goal_title = Column(String(255), nullable=True)
+    goal_priority = Column(Integer, nullable=True)
+    approval_id = Column(String(100), nullable=True)
+    reason = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True, default=dict)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 

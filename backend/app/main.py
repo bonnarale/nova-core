@@ -1,8 +1,14 @@
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
+from uuid import UUID
+
+import asyncio
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+logger = logging.getLogger(__name__)
 
 from app.agents.agent_manager import AgentManager
 from app.command_center.approvals import ApprovalsManager
@@ -17,6 +23,7 @@ from app.api.v1.router import router as api_v1_router
 from app.cognitive.engine import CognitiveEngine
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.db.activity_log_repository import ActivityLogRepository
 from app.db.postgres import close_database, init_database
 from app.events import EventSystemFactory
 from app.security.factory import SecurityFactory
@@ -30,6 +37,9 @@ from app.memory.profile import UserProfileMemory
 from app.models.gateway import ModelGateway
 from app.orchestrator.task_executor import TaskExecutor
 from app.orchestrator.task_manager import TaskManager
+from app.scheduler.factory import SchedulerFactory
+from app.autonomy.manager import AutonomyManager
+from app.autonomy.autonomous_handler import AutonomousReviewHandler
 from app.services.chroma import ChromaService
 from app.services.ollama import OllamaService
 from app.services.redis import close_redis, init_redis
@@ -134,9 +144,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.api_metrics = api_metrics
     app.state.api_tracer = api_tracer
     
+    # ProjectsManager with optional DB repository
+    from app.command_center.projects import ProjectsManager
+    projects_manager = ProjectsManager()
+    app.state.projects_manager = projects_manager
+
     # ApprovalsManager (shared between CognitiveEngine and API endpoints)
-    approvals_manager = ApprovalsManager()
+    approvals_manager = ApprovalsManager(projects_mgr=projects_manager)
     app.state.approvals_manager = approvals_manager
+
+    # ProjectGoalBridge — coordinates Goals, Projects, Workflows
+    from app.command_center.project_goal_bridge import ProjectGoalBridge
+    project_goal_bridge = ProjectGoalBridge(
+        projects_mgr=projects_manager,
+        goal_manager=goal_manager,
+        workflow_engine=workflow_engine,
+        approvals_mgr=approvals_manager,
+    )
+    app.state.project_goal_bridge = project_goal_bridge
 
     cognitive_engine = CognitiveEngine(
         goal_manager=goal_manager,
@@ -148,8 +173,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         event_publisher=event_bus,
         evolution_engine=evolution_engine,
         approvals_manager=approvals_manager,
+        workflow_engine=workflow_engine,
     )
     app.state.cognitive_engine = cognitive_engine
+
+    # Inject bridge into CognitiveEngine
+    cognitive_engine.inject_project_bridge(project_goal_bridge)
 
     # --- Auto-index semantic memory at startup ---
     try:
@@ -198,9 +227,85 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.gateway = gateway
     app.state.kernel = kernel
 
+    # --- Scheduler ---
+    scheduler = SchedulerFactory.create_scheduler()
+    await scheduler.start()
+    app.state.scheduler = scheduler
+
+    # --- Activity Log Repository ---
+    activity_repository = ActivityLogRepository(app.state.database.session_factory)
+    app.state.activity_repository = activity_repository
+
+    # --- Autonomous Handler + Scheduler Job ---
+    app.state.autonomous_loop = None
+    if settings.nova_autonomous_enabled and settings.nova_autonomous_user_id:
+        autonomy_manager = AutonomyManager()
+        await autonomy_manager.start()
+        app.state.autonomy_manager = autonomy_manager
+
+        user_id = UUID(settings.nova_autonomous_user_id)
+        autonomous_handler = AutonomousReviewHandler(
+            goal_repository=GoalManager(database=app.state.database)._repo,
+            autonomy_manager=autonomy_manager,
+            approvals_manager=approvals_manager,
+            activity_repository=activity_repository,
+            event_bus=event_bus,
+            user_id=user_id,
+            max_goals_per_cycle=settings.nova_autonomous_max_goals_per_cycle,
+        )
+
+        # Register handler with scheduler executor
+        scheduler._executor.register_handler(
+            "autonomous_review", autonomous_handler.handle
+        )
+
+        # Create and schedule the autonomous review job
+        from app.scheduler.schemas import CreateJobRequest, TriggerConfig, JobType, JobPriority, TriggerType
+        job_request = CreateJobRequest(
+            name="autonomous_review",
+            description="Autonomous review of active goals",
+            job_type=JobType.INTERVAL,
+            trigger=TriggerConfig(
+                trigger_type=TriggerType.INTERVAL,
+                interval_seconds=settings.nova_autonomous_interval_seconds,
+            ),
+            priority=JobPriority.NORMAL,
+        )
+        created_job = await scheduler.schedule_job(job_request)
+        logger.info(
+            "Autonomous review job registered (job_id=%s, interval=%ds)",
+            created_job.job_id,
+            settings.nova_autonomous_interval_seconds,
+        )
+
+        # Store reference for shutdown
+        app.state.autonomous_loop = created_job.job_id
+
     try:
         yield
     finally:
+        # Shutdown autonomous review job
+        if hasattr(app.state, "autonomous_loop") and app.state.autonomous_loop is not None:
+            job_id = app.state.autonomous_loop
+            if isinstance(job_id, str):
+                await scheduler.cancel_job(job_id)
+                logger.info("Autonomous review job cancelled: %s", job_id)
+            else:
+                # Legacy asyncio.Task path
+                job_id.cancel()
+                try:
+                    await job_id
+                except asyncio.CancelledError:
+                    pass
+
+        # Shutdown autonomy manager
+        if hasattr(app.state, "autonomy_manager"):
+            await app.state.autonomy_manager.shutdown()
+
+        # Shutdown scheduler
+        if hasattr(app.state, "scheduler"):
+            await app.state.scheduler.stop()
+
         # Shutdown TaskExecutor
         if hasattr(app.state, "task_executor"):
             await app.state.task_executor.stop()

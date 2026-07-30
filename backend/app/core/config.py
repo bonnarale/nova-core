@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     def ollama_url(self) -> str:
         return f"http://{self.ollama_host}:{self.ollama_port}"
 
+    # Autonomous execution settings
+    nova_autonomous_interval_seconds: int = Field(default=3600, alias="NOVA_AUTONOMOUS_INTERVAL_SECONDS")
+    nova_autonomous_user_id: str = Field(default="", alias="NOVA_AUTONOMOUS_USER_ID")
+    nova_autonomous_enabled: bool = Field(default=True, alias="NOVA_AUTONOMOUS_ENABLED")
+    nova_autonomous_max_goals_per_cycle: int = Field(default=5, alias="NOVA_AUTONOMOUS_MAX_GOALS_PER_CYCLE")
+
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
