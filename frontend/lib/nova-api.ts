@@ -169,6 +169,19 @@ export interface ToolsData {
   recent_executions: Array<{ id: string; tool_name: string; status: string; duration_ms: number; timestamp: string }>;
 }
 
+export interface ActivityEntry {
+  id: string;
+  goal_id: string | null;
+  goal_title: string | null;
+  action: string;
+  status: string;
+  goal_priority: number | null;
+  approval_id: string | null;
+  reason: string | null;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
 class NovaWebAPI {
   private client = api;
 
@@ -310,6 +323,17 @@ class NovaWebAPI {
         metrics: { total_executions: 0, success_rate: 0, avg_latency_ms: 0, active_tools: 0 },
         recent_executions: [],
       };
+    }
+  }
+
+  async fetchRecentActivity(limit: number = 20): Promise<ActivityEntry[]> {
+    try {
+      const response = await this.client.get<{ entries: ActivityEntry[]; total: number }>(
+        `/api/v1/activity/recent?limit=${limit}`
+      );
+      return response.entries || [];
+    } catch {
+      return [];
     }
   }
 }

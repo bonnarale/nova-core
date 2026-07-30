@@ -2,12 +2,14 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { Card, Badge, StatusBadge, Spinner } from "@/components/ui";
-import { MetricCard } from "@/components/dashboard";
-import { novaWeb, type NovaDashboardData } from "@/lib/nova-api";
+import { MetricCard, ActivityCard } from "@/components/dashboard";
+import { novaWeb, type NovaDashboardData, type ActivityEntry } from "@/lib/nova-api";
 
 export function NovaDashboard({ refreshKey }: { refreshKey?: number }) {
   const [data, setData] = useState<NovaDashboardData | null>(null);
+  const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activityLoading, setActivityLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
     try {
@@ -20,9 +22,21 @@ export function NovaDashboard({ refreshKey }: { refreshKey?: number }) {
     }
   }, []);
 
+  const fetchActivity = useCallback(async () => {
+    try {
+      const entries = await novaWeb.fetchRecentActivity(10);
+      setActivity(entries);
+    } catch {
+      // keep previous data
+    } finally {
+      setActivityLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchData();
-  }, [fetchData, refreshKey]);
+    fetchActivity();
+  }, [fetchData, fetchActivity, refreshKey]);
 
   if (loading) {
     return (
@@ -147,6 +161,8 @@ export function NovaDashboard({ refreshKey }: { refreshKey?: number }) {
           </div>
         </Card>
       )}
+
+      <ActivityCard entries={activity} loading={activityLoading} />
 
       {objectives.length === 0 && projects.length === 0 && approvals.length === 0 && (
         <Card>

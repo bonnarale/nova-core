@@ -107,3 +107,5 @@ export function HealthGrid({ items }: { items: Array<{ name: string; status: str
     </div>
   );
 }
+
+export { ActivityCard } from "./ActivityCard";
