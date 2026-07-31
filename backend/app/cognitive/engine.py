@@ -59,6 +59,7 @@ class CognitiveEngine:
         approvals_manager: Any | None = None,
         evolution_engine: Any | None = None,
         tool_runtime: Any | None = None,
+        activity_repository: Any | None = None,
     ) -> None:
         self._goal_manager = goal_manager
         self._task_manager = task_manager
@@ -77,6 +78,7 @@ class CognitiveEngine:
         self._event_publisher = event_publisher
         self._evolution_engine = evolution_engine
         self._tool_runtime = tool_runtime
+        self._activity_repository = activity_repository
         self._project_bridge = None  # Set via inject_project_bridge()
         self._router = CognitiveRouter(
             detector=detector or RuleBasedIntentDetector(),
@@ -180,7 +182,13 @@ class CognitiveEngine:
                 logger.debug("Could not load conversation history for %s", session_id)
 
         if user_id:
-            uid = UUID(user_id) if isinstance(user_id, str) else user_id
+            uid = None
+            if isinstance(user_id, str):
+                try:
+                    uid = UUID(user_id)
+                except ValueError:
+                    # user_id might be an email — leave as string for now
+                    uid = None
             try:
                 profile = await self._profile_memory.get_profile(uid)
                 ctx.user_profile = profile
@@ -393,7 +401,7 @@ class CognitiveEngine:
     async def _execute_tool(
         self, decision: CognitiveDecision, context: CognitiveContext
     ) -> dict[str, Any]:
-        """Execute a tool via ToolRuntime."""
+        """Execute a tool via ToolRuntime and persist to activity log."""
         if self._tool_runtime is None:
             logger.error("ToolRuntime not available")
             return {"error": "ToolRuntime not available"}
@@ -409,23 +417,73 @@ class CognitiveEngine:
 
         try:
             from app.tools.context import ToolContext
+            import time
 
             ctx = ToolContext(
                 tool_id=tool_name,
                 user_id=context.user_id or "",
             )
+            start = time.monotonic()
             result = await self._tool_runtime.execute_tool(
                 tool_name=tool_name,
                 params=params,
                 context=ctx,
             )
+            duration_ms = int((time.monotonic() - start) * 1000)
             logger.info("Tool %s result: success=%s, error=%s", tool_name, result.success, result.error)
-            return {
+
+            tool_result = {
                 "tool_name": tool_name,
                 "success": result.success,
                 "data": result.data,
                 "error": result.error,
             }
+
+            # Persist to activity log
+            logger.info("Persist check: repo=%s, user_id=%s", self._activity_repository is not None, context.user_id)
+            if self._activity_repository is not None and context.user_id:
+                try:
+                    from uuid import UUID as _UUID
+                    user_id = None
+                    # Try parsing as UUID first
+                    if len(context.user_id) == 36:
+                        try:
+                            user_id = _UUID(context.user_id)
+                        except ValueError:
+                            pass
+                    # If not UUID, look up by email/name in user_profiles
+                    if not user_id and self._activity_repository._session_factory:
+                        async with self._activity_repository._session_factory() as session:
+                            from sqlalchemy import text as _text
+                            user_query = await session.execute(
+                                _text("SELECT id FROM user_profiles LIMIT 1")
+                            )
+                            row = user_query.first()
+                            if row:
+                                user_id = row[0]
+                    session_id = None
+                    if context.session_id and len(str(context.session_id)) == 36:
+                        try:
+                            session_id = _UUID(str(context.session_id))
+                        except ValueError:
+                            pass
+                    if user_id:
+                        tool_status = "success" if result.success else "failed"
+                        await self._activity_repository.create(
+                            user_id=user_id,
+                            action="tool_executed",
+                            status=tool_status,
+                            reason=decision.reasoning,
+                            tool_name=tool_name,
+                            tool_params=params,
+                            tool_result={"success": result.success, "error": result.error, "data_keys": list(result.data.keys()) if isinstance(result.data, dict) else None},
+                            duration_ms=duration_ms,
+                            session_id=session_id,
+                        )
+                except Exception as exc:
+                    logger.warning("Failed to persist tool execution: %s", exc, exc_info=True)
+
+            return tool_result
         except Exception as exc:
             logger.exception("Tool execution failed: %s", exc)
             return {"error": f"Tool execution failed: {exc}", "tool_name": tool_name}

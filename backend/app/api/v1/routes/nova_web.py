@@ -187,6 +187,20 @@ async def chat(req: ChatRequest, request: Request) -> dict[str, Any]:
     await semantic_memory.store(session_id_uuid, message)
 
     # 5. Run agent via kernel (with cognitive engine intent detection)
+
+    # Resolve user_id from auth token
+    resolved_user_id = None
+    try:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token_value = auth_header[7:]
+            security_engine = request.app.state.security_engine
+            if security_engine:
+                token = security_engine.verify_token(token_value)
+                if token:
+                    resolved_user_id = token.user_id
+    except Exception:
+        pass
     task_id: str | None = None
     kernel_result: dict[str, Any] = {}
     try:
@@ -200,7 +214,7 @@ async def chat(req: ChatRequest, request: Request) -> dict[str, Any]:
             from app.cognitive.decision import DecisionAction
             state = await cognitive_engine.process(
                 raw_input=message,
-                user_id=None,
+                user_id=resolved_user_id,
                 session_id=str(session_id_uuid),
             )
             action = state.decision.action if state.decision else DecisionAction.ROUTE_TO_KERNEL

@@ -120,6 +120,8 @@ class ActivityLog(Base):
     __table_args__ = (
         Index("ix_activity_log_user_created", "user_id", "created_at"),
         Index("ix_activity_log_goal", "goal_id"),
+        Index("ix_activity_log_tool", "tool_name"),
+        Index("ix_activity_log_session", "session_id"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -140,6 +142,12 @@ class ActivityLog(Base):
     approval_id = Column(String(100), nullable=True)
     reason = Column(Text, nullable=True)
     details = Column(JSONB, nullable=True, default=dict)
+    # Tool tracking fields
+    tool_name = Column(String(100), nullable=True)
+    tool_params = Column(JSONB, nullable=True, default=dict)
+    tool_result = Column(JSONB, nullable=True, default=dict)
+    duration_ms = Column(Integer, nullable=True)
+    session_id = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

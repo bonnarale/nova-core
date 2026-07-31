@@ -164,6 +164,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.project_goal_bridge = project_goal_bridge
 
+    # --- Activity Log Repository (must be before CognitiveEngine) ---
+    activity_repository = ActivityLogRepository(app.state.database.session_factory)
+    app.state.activity_repository = activity_repository
+
     cognitive_engine = CognitiveEngine(
         goal_manager=goal_manager,
         task_manager=task_manager,
@@ -176,6 +180,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         approvals_manager=approvals_manager,
         workflow_engine=workflow_engine,
         tool_runtime=tool_runtime,
+        activity_repository=activity_repository,
     )
     app.state.cognitive_engine = cognitive_engine
 
@@ -233,10 +238,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler = SchedulerFactory.create_scheduler()
     await scheduler.start()
     app.state.scheduler = scheduler
-
-    # --- Activity Log Repository ---
-    activity_repository = ActivityLogRepository(app.state.database.session_factory)
-    app.state.activity_repository = activity_repository
 
     # --- Autonomous Handler + Scheduler Job ---
     app.state.autonomous_loop = None

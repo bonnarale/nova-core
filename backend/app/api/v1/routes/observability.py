@@ -168,3 +168,79 @@ async def export_csv(request: Request):
     engine = _get_engine(request)
     content = engine.export_metrics("csv")
     return CSVExportResponse(content=content)
+
+
+# ---------------------------------------------------------------------------
+# Tool executions & decisions (Fase E)
+# ---------------------------------------------------------------------------
+
+def _get_activity_repo(request: Request):
+    repo = getattr(request.app.state, "activity_repository", None)
+    if repo is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Activity repository not available",
+        )
+    return repo
+
+
+def _serialize_entry(entry) -> dict:
+    return {
+        "id": str(entry.id),
+        "action": entry.action,
+        "status": entry.status,
+        "reason": entry.reason,
+        "tool_name": entry.tool_name,
+        "tool_params": entry.tool_params or {},
+        "tool_result": entry.tool_result or {},
+        "duration_ms": entry.duration_ms,
+        "session_id": str(entry.session_id) if entry.session_id else None,
+        "goal_title": entry.goal_title,
+        "created_at": entry.created_at.isoformat() if entry.created_at else None,
+    }
+
+
+@router.get("/tool-executions")
+async def list_tool_executions(
+    request: Request,
+    tool_name: str | None = Query(None, description="Filter by tool name"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    repo = _get_activity_repo(request)
+    entries = await repo.list_tool_executions(tool_name=tool_name, limit=limit, offset=offset)
+    return {"entries": [_serialize_entry(e) for e in entries], "total": len(entries)}
+
+
+@router.get("/tool-metrics")
+async def tool_metrics(
+    request: Request,
+    hours: int = Query(24, ge=1, le=168),
+):
+    repo = _get_activity_repo(request)
+    metrics = await repo.get_tool_metrics(hours=hours)
+    return metrics
+
+
+@router.get("/decisions")
+async def list_decisions(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    repo = _get_activity_repo(request)
+    entries = await repo.list_decisions(limit=limit, offset=offset)
+    return {"entries": [_serialize_entry(e) for e in entries], "total": len(entries)}
+
+
+@router.get("/timeline")
+async def timeline(
+    request: Request,
+    session_id: str | None = Query(None, description="Filter by session ID"),
+    limit: int = Query(100, ge=1, le=500),
+):
+    repo = _get_activity_repo(request)
+    from uuid import UUID
+    sid = UUID(session_id) if session_id else None
+    entries = await repo.list_timeline(session_id=sid, limit=limit)
+    return {"entries": [_serialize_entry(e) for e in entries], "total": len(entries)}

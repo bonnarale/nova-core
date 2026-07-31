@@ -1,116 +1,244 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Card, Spinner, StatusBadge } from "@/components/ui";
+import { Card, Spinner, StatusBadge, Button } from "@/components/ui";
 import { MetricCard, PageHeader } from "@/components/dashboard";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-interface ObservabilityData {
-  metrics: {
-    counters: Record<string, number>;
-    gauges: Record<string, number>;
-    histograms: Record<string, unknown>;
-  };
-  traces: {
-    total_spans: number;
-    total_traces: number;
-    traces: Record<string, unknown>;
-  };
-  health: {
-    phase: string;
-    uptime: number;
-    events_count: number;
-    phase_history: Array<{ phase: string; timestamp: string }>;
-  };
+interface TimelineEntry {
+  id: string;
+  action: string;
+  status: string;
+  reason: string | null;
+  tool_name: string | null;
+  duration_ms: number | null;
+  session_id: string | null;
+  goal_title: string | null;
+  created_at: string;
+}
+
+interface ToolMetrics {
+  period_hours: number;
+  tools: Record<string, {
+    executions: number;
+    successes: number;
+    failures: number;
+    success_rate: number;
+    avg_duration_ms: number;
+    last_used: string | null;
+  }>;
+  total_executions: number;
+}
+
+const STATUS_ICONS: Record<string, string> = {
+  success: "✅",
+  failed: "❌",
+  skipped: "⏭️",
+  blocked: "🚫",
+  pending_approval: "⏳",
+  tool_executed: "🔧",
+};
+
+const ACTION_LABELS: Record<string, string> = {
+  tool_executed: "Tool ejecutada",
+  reviewed: "Revisado",
+  executed: "Ejecutado",
+  skipped: "Omitido",
+  failed: "Falló",
+};
+
+function formatTime(iso: string): string {
+  try { return new Date(iso).toLocaleTimeString(); } catch { return ""; }
+}
+
+function formatDuration(ms: number | null): string {
+  if (!ms) return "—";
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 export default function ObservabilityPage() {
-  const [data, setData] = useState<ObservabilityData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"overview" | "timeline" | "tools" | "decisions">("overview");
+  const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
+  const [toolMetrics, setToolMetrics] = useState<ToolMetrics | null>(null);
+  const [decisions, setDecisions] = useState<TimelineEntry[]>([]);
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
+  const [loadingMetrics, setLoadingMetrics] = useState(false);
+  const [loadingDecisions, setLoadingDecisions] = useState(false);
 
-  const fetchData = useCallback(async () => {
+  const fetchTimeline = useCallback(async () => {
+    setLoadingTimeline(true);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/nova-web/observability`);
-      if (!res.ok) throw new Error(`${res.status}`);
-      const result = await res.json();
-      setData(result);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
-    } finally {
-      setLoading(false);
-    }
+      const res = await fetch(`${API_BASE}/api/v1/observability/timeline?limit=50`);
+      if (res.ok) { const d = await res.json(); setTimeline(d.entries || []); }
+    } catch {} finally { setLoadingTimeline(false); }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  const fetchToolMetrics = useCallback(async () => {
+    setLoadingMetrics(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/observability/tool-metrics?hours=24`);
+      if (res.ok) setToolMetrics(await res.json());
+    } catch {} finally { setLoadingMetrics(false); }
+  }, []);
 
-  if (loading) return <div className="flex justify-center py-20"><Spinner size="lg" /></div>;
-  if (error || !data) return <div className="text-center py-20 text-gray-500">Unable to load observability data{error ? `: ${error}` : ""}</div>;
+  const fetchDecisions = useCallback(async () => {
+    setLoadingDecisions(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/observability/decisions?limit=50`);
+      if (res.ok) { const d = await res.json(); setDecisions(d.entries || []); }
+    } catch {} finally { setLoadingDecisions(false); }
+  }, []);
 
-  const counterEntries = Object.entries(data.metrics.counters || {});
-  const gaugeEntries = Object.entries(data.metrics.gauges || {});
-  const uptimeHours = Math.floor(data.health.uptime / 3600);
-  const uptimeMinutes = Math.floor((data.health.uptime % 3600) / 60);
+  useEffect(() => {
+    if (activeTab === "timeline") fetchTimeline();
+    if (activeTab === "tools") fetchToolMetrics();
+    if (activeTab === "decisions") fetchDecisions();
+  }, [activeTab, fetchTimeline, fetchToolMetrics, fetchDecisions]);
 
   return (
     <div>
-      <PageHeader title="Observability" description="System health, metrics, and traces" />
+      <PageHeader title="Observability" description="Auditoría, trazabilidad y métricas de NOVA" />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <MetricCard title="Phase" value={data.health.phase} icon="&#9889;" />
-        <MetricCard title="Uptime" value={`${uptimeHours}h ${uptimeMinutes}m`} icon="&#128337;" />
-        <MetricCard title="Total Spans" value={data.traces.total_spans} icon="&#128200;" />
-        <MetricCard title="Total Traces" value={data.traces.total_traces} icon="&#128269;" />
+      {/* Tabs */}
+      <div className="flex gap-2 mb-6">
+        {[
+          { key: "overview", label: "Overview" },
+          { key: "timeline", label: "Timeline" },
+          { key: "tools", label: "Tool Metrics" },
+          { key: "decisions", label: "Decisiones" },
+        ].map((t) => (
+          <Button key={t.key} size="sm" variant={activeTab === t.key ? "primary" : "ghost"} onClick={() => setActiveTab(t.key as typeof activeTab)}>
+            {t.label}
+          </Button>
+        ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-        <Card title="System Health">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-400">Phase</span>
-              <StatusBadge status={data.health.phase === "running" ? "healthy" : "degraded"} />
+      {/* ── Overview Tab ─────────────────────────────────── */}
+      {activeTab === "overview" && (
+        <Card>
+          <div className="text-center py-8 text-gray-500">
+            <p>Select a tab above to view audit data.</p>
+            <p className="text-xs mt-2">Timeline shows all NOVA actions chronologically.</p>
+          </div>
+        </Card>
+      )}
+
+      {/* ── Timeline Tab ─────────────────────────────────── */}
+      {activeTab === "timeline" && (
+        <Card title="Flujo de Decisión — Qué hizo NOVA y por qué">
+          {loadingTimeline ? (
+            <div className="flex justify-center py-8"><Spinner size="md" /></div>
+          ) : timeline.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">No activity recorded yet. Make a chat request to generate entries.</div>
+          ) : (
+            <div className="space-y-1">
+              {timeline.map((entry) => {
+                const icon = STATUS_ICONS[entry.status] || "📋";
+                const actionLabel = ACTION_LABELS[entry.action] || entry.action;
+                return (
+                  <div key={entry.id} className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-800/50 transition-colors">
+                    <span className="text-lg mt-0.5">{icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500 font-mono">{formatTime(entry.created_at)}</span>
+                        <span className="text-sm font-medium text-gray-200">{actionLabel}</span>
+                        {entry.tool_name && (
+                          <span className="px-1.5 py-0.5 bg-indigo-900/50 text-indigo-300 rounded text-xs">{entry.tool_name}</span>
+                        )}
+                        {entry.duration_ms != null && (
+                          <span className="text-xs text-gray-500">{formatDuration(entry.duration_ms)}</span>
+                        )}
+                      </div>
+                      {entry.reason && (
+                        <p className="text-xs text-gray-400 mt-1 italic">&ldquo;{entry.reason}&rdquo;</p>
+                      )}
+                      {entry.goal_title && (
+                        <p className="text-xs text-gray-500 mt-0.5">Goal: {entry.goal_title}</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-400">Events</span>
-              <span className="text-sm text-gray-200">{data.health.events_count}</span>
-            </div>
-            {data.health.phase_history.length > 0 && (
-              <div className="space-y-1.5 mt-3">
-                <span className="text-xs text-gray-500 uppercase">Phase History</span>
-                {data.health.phase_history.map((p, i) => (
-                  <div key={i} className="flex items-center justify-between text-xs">
-                    <span className="text-gray-400">{p.phase}</span>
-                    <span className="text-gray-600">{new Date(p.timestamp).toLocaleTimeString()}</span>
+          )}
+        </Card>
+      )}
+
+      {/* ── Tool Metrics Tab ──────────────────────────────── */}
+      {activeTab === "tools" && (
+        <Card title="Métricas de Herramientas — Últimas 24h">
+          {loadingMetrics ? (
+            <div className="flex justify-center py-8"><Spinner size="md" /></div>
+          ) : !toolMetrics || Object.keys(toolMetrics.tools).length === 0 ? (
+            <div className="text-center py-8 text-gray-500">No tool executions recorded yet.</div>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-4 mb-6">
+                <div className="bg-gray-900/50 rounded-lg p-4 text-center">
+                  <div className="text-2xl font-bold text-gray-200">{toolMetrics.total_executions}</div>
+                  <div className="text-xs text-gray-500">Total Executions</div>
+                </div>
+                <div className="bg-gray-900/50 rounded-lg p-4 text-center">
+                  <div className="text-2xl font-bold text-green-400">{Object.keys(toolMetrics.tools).length}</div>
+                  <div className="text-xs text-gray-500">Tools Used</div>
+                </div>
+                <div className="bg-gray-900/50 rounded-lg p-4 text-center">
+                  <div className="text-2xl font-bold text-gray-200">{toolMetrics.period_hours}h</div>
+                  <div className="text-xs text-gray-500">Period</div>
+                </div>
+              </div>
+              <div className="space-y-3">
+                {Object.entries(toolMetrics.tools).map(([name, m]) => (
+                  <div key={name} className="flex items-center gap-4 bg-gray-900/50 rounded-lg p-3">
+                    <span className="text-sm font-medium text-gray-200 w-40 truncate">{name}</span>
+                    <div className="flex-1 flex items-center gap-4">
+                      <div className="text-xs text-gray-400">{m.executions} runs</div>
+                      <div className="flex-1 bg-gray-700 rounded-full h-2">
+                        <div className="bg-green-500 h-2 rounded-full" style={{ width: `${m.success_rate}%` }} />
+                      </div>
+                      <div className="text-xs text-gray-400 w-12 text-right">{m.success_rate}%</div>
+                      <div className="text-xs text-gray-500 w-16 text-right">~{formatDuration(m.avg_duration_ms)}</div>
+                    </div>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
+            </>
+          )}
         </Card>
+      )}
 
-        <Card title="Metrics">
-          {counterEntries.length === 0 && gaugeEntries.length === 0 ? (
-            <div className="text-sm text-gray-500 py-4 text-center">No metrics recorded yet</div>
+      {/* ── Decisions Tab ─────────────────────────────────── */}
+      {activeTab === "decisions" && (
+        <Card title="Decisiones del CognitiveEngine — Razonamiento de NOVA">
+          {loadingDecisions ? (
+            <div className="flex justify-center py-8"><Spinner size="md" /></div>
+          ) : decisions.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">No decisions recorded yet.</div>
           ) : (
             <div className="space-y-3">
-              {counterEntries.map(([key, val]) => (
-                <div key={key} className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">{key}</span>
-                  <span className="text-gray-200">{val}</span>
-                </div>
-              ))}
-              {gaugeEntries.map(([key, val]) => (
-                <div key={key} className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">{key}</span>
-                  <span className="text-gray-200">{val}</span>
+              {decisions.map((d) => (
+                <div key={d.id} className="bg-gray-900/50 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs text-gray-500 font-mono">{formatTime(d.created_at)}</span>
+                    <span className={`px-2 py-0.5 rounded text-xs ${
+                      d.status === "success" ? "bg-green-900/50 text-green-300" :
+                      d.status === "failed" ? "bg-red-900/50 text-red-300" :
+                      "bg-gray-700 text-gray-300"
+                    }`}>{d.status}</span>
+                    {d.tool_name && <span className="px-1.5 py-0.5 bg-indigo-900/50 text-indigo-300 rounded text-xs">{d.tool_name}</span>}
+                    {d.duration_ms != null && <span className="text-xs text-gray-500">{formatDuration(d.duration_ms)}</span>}
+                  </div>
+                  {d.reason && (
+                    <p className="text-sm text-gray-300 italic">&ldquo;{d.reason}&rdquo;</p>
+                  )}
                 </div>
               ))}
             </div>
           )}
         </Card>
-      </div>
+      )}
     </div>
   );
 }
