@@ -1,0 +1,420 @@
+"""Workflow Engine API endpoints."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from uuid import UUID
+
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
+
+from app.workflows.models import (
+    RetryPolicy,
+    StepType,
+    TimeoutPolicy,
+    WorkflowDefinition,
+    WorkflowStep,
+)
+from app.workflows.schemas import (
+    WorkflowCreate,
+    WorkflowExecutionAction,
+    WorkflowExecutionCreate,
+    WorkflowExecutionResponse,
+    WorkflowResponse,
+    WorkflowStepSchema,
+    WorkflowUpdate,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/workflows", tags=["Workflows"])
+
+
+def _get_engine(request: Request):
+    engine = request.app.state.workflow_engine
+    if engine is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Workflow engine not available",
+        )
+    return engine
+
+
+# --- Workflow Definition CRUD ---
+
+
+@router.post("", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
+async def create_workflow(body: WorkflowCreate, request: Request):
+    engine = _get_engine(request)
+    domain_steps = [_schema_step_to_domain(s) for s in body.steps]
+    definition = WorkflowDefinition(
+        name=body.name,
+        description=body.description,
+        version=body.version,
+        steps=domain_steps,
+        input_schema=body.input_schema,
+        output_schema=body.output_schema,
+        tags=body.tags,
+        metadata=body.metadata,
+    )
+    import uuid as _uuid
+    definition.id = str(_uuid.uuid4())
+    engine.register_workflow(definition)
+    return _definition_to_response(definition)
+
+
+@router.get("", response_model=list[WorkflowResponse])
+async def list_workflows(
+    request: Request,
+    tag: str | None = Query(default=None),
+):
+    engine = _get_engine(request)
+    definitions = engine.list_workflows()
+    if tag:
+        definitions = [w for w in definitions if tag in w.tags]
+    return [_definition_to_response(w) for w in definitions]
+
+
+# --- Execution management (MUST come before /{workflow_id}) ---
+
+
+@router.post(
+    "/executions",
+    response_model=WorkflowExecutionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_execution(body: WorkflowExecutionCreate, request: Request):
+    engine = _get_engine(request)
+    execution = await engine.create_execution(
+        workflow_id=body.workflow_id,
+        input_data=body.input,
+        user_id=body.user_id,
+        session_id=body.session_id,
+        tags=body.tags,
+        metadata=body.metadata,
+    )
+    return _execution_to_response(execution)
+
+
+@router.get("/executions", response_model=list[WorkflowExecutionResponse])
+async def list_executions(
+    request: Request,
+    workflow_id: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+):
+    engine = _get_engine(request)
+    executions = engine.list_executions(
+        workflow_id=workflow_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    return [_execution_to_response(e) for e in executions]
+
+
+@router.get("/executions/{execution_id}", response_model=WorkflowExecutionResponse)
+async def get_execution(execution_id: str, request: Request):
+    engine = _get_engine(request)
+    execution = engine.get_execution(execution_id)
+    if execution is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Execution not found",
+        )
+    return _execution_to_response(execution)
+
+
+@router.post("/executions/{execution_id}/start", response_model=WorkflowExecutionResponse)
+async def start_execution(execution_id: str, request: Request):
+    engine = _get_engine(request)
+    execution = await engine.start_execution(execution_id)
+    return _execution_to_response(execution)
+
+
+@router.post("/executions/{execution_id}/start-async", response_model=WorkflowExecutionResponse)
+async def start_execution_async(execution_id: str, request: Request):
+    """Start workflow execution in background and return immediately."""
+    engine = _get_engine(request)
+    execution = engine.get_execution(execution_id)
+    if execution is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Execution not found",
+        )
+    # Run in background so the caller gets an immediate response
+    asyncio.create_task(_run_execution_background(engine, execution_id))
+    return _execution_to_response(execution)
+
+
+async def _run_execution_background(engine, execution_id: str) -> None:
+    """Background task that runs a workflow execution to completion."""
+    try:
+        await engine.start_execution(execution_id)
+    except Exception:
+        logger.exception("Background execution %s failed", execution_id)
+
+
+@router.get("/executions/{execution_id}/stream")
+async def stream_execution_events(execution_id: str, request: Request):
+    """SSE endpoint that streams workflow execution events in real-time."""
+    engine = _get_engine(request)
+    execution = engine.get_execution(execution_id)
+    if execution is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Execution not found",
+        )
+    return StreamingResponse(
+        engine.event_bus.sse_stream(execution_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/executions/{execution_id}/action", response_model=WorkflowExecutionResponse)
+async def execute_action(
+    execution_id: str, body: WorkflowExecutionAction, request: Request
+):
+    engine = _get_engine(request)
+    action = body.action.lower()
+
+    if action == "pause":
+        execution = await engine.pause_execution(execution_id)
+    elif action == "resume":
+        execution = await engine.resume_execution(execution_id)
+    elif action == "cancel":
+        execution = await engine.cancel_execution(execution_id)
+    elif action == "rollback":
+        execution = await engine.rollback_execution(execution_id)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown action: {action}. Supported: pause, resume, cancel, rollback",
+        )
+    return _execution_to_response(execution)
+
+
+# --- Events ---
+
+
+@router.get("/executions/{execution_id}/events")
+async def get_execution_events(execution_id: str, request: Request):
+    engine = _get_engine(request)
+    events = engine.get_events(execution_id)
+    return [e.to_dict() for e in events]
+
+
+# --- Workflow Definition by ID (MUST come after /executions routes) ---
+
+
+@router.get("/{workflow_id}", response_model=WorkflowResponse)
+async def get_workflow(workflow_id: str, request: Request):
+    engine = _get_engine(request)
+    definition = engine.get_workflow(workflow_id)
+    if definition is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow not found",
+        )
+    return _definition_to_response(definition)
+
+
+@router.put("/{workflow_id}", response_model=WorkflowResponse)
+async def update_workflow(workflow_id: str, body: WorkflowUpdate, request: Request):
+    engine = _get_engine(request)
+    definition = engine.get_workflow(workflow_id)
+    if definition is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow not found",
+        )
+    if body.name is not None:
+        definition.name = body.name
+    if body.description is not None:
+        definition.description = body.description
+    if body.version is not None:
+        definition.version = body.version
+    if body.steps is not None:
+        definition.steps = [_schema_step_to_domain(s) for s in body.steps]
+    if body.tags is not None:
+        definition.tags = body.tags
+    if body.metadata is not None:
+        definition.metadata = body.metadata
+    engine.register_workflow(definition)
+    return _definition_to_response(definition)
+
+
+@router.delete("/{workflow_id}", status_code=status.HTTP_200_OK)
+async def delete_workflow(workflow_id: str, request: Request):
+    engine = _get_engine(request)
+    engine._workflow_registry.unregister(workflow_id)
+    return {"status": "deleted"}
+
+
+# -- Helpers --
+
+
+def _schema_step_to_domain(step: WorkflowStepSchema) -> WorkflowStep:
+    """Convert a Pydantic WorkflowStepSchema to a domain WorkflowStep."""
+    retry_policy = None
+    if step.retry_policy:
+        rp = step.retry_policy
+        retry_policy = RetryPolicy(
+            max_retries=rp.max_retries,
+            delay_seconds=rp.delay_seconds,
+            backoff_multiplier=rp.backoff_multiplier,
+            max_delay_seconds=rp.max_delay_seconds,
+            retryable_errors=list(rp.retryable_errors),
+        )
+
+    timeout_policy = None
+    if step.timeout_policy:
+        tp = step.timeout_policy
+        timeout_policy = TimeoutPolicy(
+            step_timeout_seconds=tp.step_timeout_seconds,
+            workflow_timeout_seconds=tp.workflow_timeout_seconds,
+            hard_timeout_seconds=tp.hard_timeout_seconds,
+        )
+
+    step_type_str = step.step_type.upper()
+    try:
+        step_type = StepType(step_type_str)
+    except ValueError:
+        step_type = StepType.TASK
+
+    return WorkflowStep(
+        id=step.id,
+        name=step.name,
+        step_type=step_type,
+        handler=step.handler,
+        config=dict(step.config),
+        depends_on=list(step.depends_on),
+        retry_policy=retry_policy,
+        timeout_policy=timeout_policy,
+        input_mapping=dict(step.input_mapping),
+        output_mapping=dict(step.output_mapping),
+    )
+
+
+def _definition_to_response(d: WorkflowDefinition) -> dict:
+    import uuid
+
+    steps = []
+    for s in d.steps:
+        step_dict = s if isinstance(s, dict) else s.to_dict() if hasattr(s, "to_dict") else {}
+        steps.append(step_dict)
+
+    return {
+        "id": d.id if isinstance(d.id, str) else str(d.id),
+        "name": d.name,
+        "description": d.description,
+        "version": d.version,
+        "steps": steps,
+        "input_schema": d.input_schema,
+        "output_schema": d.output_schema,
+        "tags": d.tags,
+        "metadata": d.metadata,
+    }
+
+
+def _execution_to_response(e) -> dict:
+    steps = []
+    for s in e.step_executions:
+        se = s.to_dict() if hasattr(s, "to_dict") else (s if isinstance(s, dict) else {})
+        steps.append(se)
+
+    return {
+        "id": e.id if isinstance(e.id, str) else str(e.id),
+        "workflow_id": e.workflow_id,
+        "workflow_name": e.workflow_name,
+        "status": e.status.value if hasattr(e.status, "value") else str(e.status),
+        "error": e.error,
+        "current_step_id": e.current_step_id,
+        "input": e.input,
+        "output": e.output,
+        "steps": steps,
+        "created_at": e.created_at,
+        "started_at": e.started_at,
+        "completed_at": e.completed_at,
+        "duration_ms": e.duration_ms,
+        "user_id": e.user_id,
+        "tags": e.tags,
+        "metadata": e.metadata,
+    }
+
+
+# --- Chapter 21 Orchestrator endpoints ---
+
+
+def _get_orchestrator(request: Request):
+    orchestrator = getattr(request.app.state, "workflow_orchestrator", None)
+    if orchestrator is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Workflow orchestrator not available",
+        )
+    return orchestrator
+
+
+@router.post("/import", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
+async def import_workflow(body: WorkflowCreate, request: Request):
+    orchestrator = _get_orchestrator(request)
+    data = body.model_dump()
+    definition = await orchestrator.import_workflow(data)
+    return _definition_to_response(definition)
+
+
+@router.get("/export/{workflow_id}")
+async def export_workflow(workflow_id: str, request: Request):
+    orchestrator = _get_orchestrator(request)
+    data = await orchestrator.export_workflow(workflow_id)
+    if data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workflow not found",
+        )
+    return data
+
+
+@router.get("/templates")
+async def get_templates():
+    from app.workflows.templates import list_templates
+    return list_templates()
+
+
+@router.get("/metrics")
+async def get_metrics(request: Request):
+    orchestrator = _get_orchestrator(request)
+    return orchestrator.get_metrics_dict()
+
+
+@router.get("/statistics")
+async def get_statistics(request: Request):
+    orchestrator = _get_orchestrator(request)
+    return await orchestrator.get_statistics()
+
+
+@router.get("/health")
+async def get_health(request: Request):
+    orchestrator = _get_orchestrator(request)
+    stats = await orchestrator.get_statistics()
+    return {
+        "status": "ok" if orchestrator.lifecycle.state.value == "running" else "stopped",
+        "lifecycle_state": orchestrator.lifecycle.state.value,
+        "total_definitions": stats.get("total_definitions", 0),
+        "total_executions": stats.get("total_executions", 0),
+        "uptime_seconds": orchestrator.lifecycle.uptime_seconds,
+    }
+
+
+@router.get("/traces")
+async def get_traces(request: Request, limit: int = Query(default=100, ge=1, le=1000)):
+    orchestrator = _get_orchestrator(request)
+    return orchestrator.get_traces_dict(limit=limit)

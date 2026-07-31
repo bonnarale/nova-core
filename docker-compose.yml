@@ -30,6 +30,8 @@ services:
     build:
       context: .
       dockerfile: docker/backend/Dockerfile
+    ports:
+      - "8000:8000"
     environment:
       PROJECT_NAME: ${PROJECT_NAME:-NOVA CORE}
       ENVIRONMENT: ${ENVIRONMENT:-production}
@@ -47,6 +49,11 @@ services:
       ANONYMIZED_TELEMETRY: "FALSE"
       OLLAMA_HOST: ollama
       OLLAMA_PORT: 11434
+      NOVA_AUTONOMOUS_ENABLED: ${NOVA_AUTONOMOUS_ENABLED:-true}
+      NOVA_AUTONOMOUS_USER_ID: ${NOVA_AUTONOMOUS_USER_ID:-}
+      NOVA_AUTONOMOUS_INTERVAL_SECONDS: ${NOVA_AUTONOMOUS_INTERVAL_SECONDS:-3600}
+      NOVA_AUTONOMOUS_MAX_GOALS_PER_CYCLE: ${NOVA_AUTONOMOUS_MAX_GOALS_PER_CYCLE:-5}
+      NOVA_TOKEN_SECRET: ${NOVA_TOKEN_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -133,7 +140,14 @@ services:
       - no-new-privileges:true
 
   ollama:
-    image: ollama/ollama:0.3.12
+    image: ollama/ollama:latest
+    ports:
+    - "11434:11434"
+    dns:
+    - 8.8.8.8
+    - 1.1.1.1
+    dns_opt:
+    - single-request-reopen
     environment:
       OLLAMA_HOST: 0.0.0.0:11434
       OLLAMA_KEEP_ALIVE: 24h
@@ -220,10 +234,11 @@ services:
 
 networks:
   nova_public:
+    name: nova-core_nova_public
     driver: bridge
   nova_internal:
     driver: bridge
-    internal: true
+    name: nova-core_nova_internal
 
 volumes:
   postgres_data:

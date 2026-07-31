@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nova-config
+  labels:
+    app: nova-core
+data:
+  APP_NAME: "nova-core"
+  APP_ENV: "production"
+  LOG_LEVEL: "info"
+  API_HOST: "0.0.0.0"
+  API_PORT: "8000"
+  WORKERS: "4"
+  DEBUG: "false"
+  CORS_ORIGINS: "https://nova-core.ai"
+  CHROMA_HOST: "chromadb"
+  CHROMA_PORT: "8000"
+  OLLAMA_HOST: "ollama"
+  OLLAMA_PORT: "11434"

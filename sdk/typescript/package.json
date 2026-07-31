@@ -1,0 +1,31 @@
+{
+  "name": "@novacore/sdk",
+  "version": "0.1.0",
+  "description": "Official NOVA CORE TypeScript SDK — typed client for the NOVA CORE AI operating system API",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src/ --ext .ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": ["nova-core", "ai", "sdk", "api-client"],
+  "author": "NOVA CORE Team",
+  "license": "MIT",
+  "engines": { "node": ">=18.0.0" },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^20.14.0",
+    "vitest": "^1.6.0"
+  },
+  "dependencies": {}
+}

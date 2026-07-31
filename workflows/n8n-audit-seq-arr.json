@@ -1,0 +1,160 @@
+[
+  {
+    "name": "Audit Sequential",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "audit-sequential",
+          "responseMode": "responseNode",
+          "options": {}
+        },
+        "id": "wh",
+        "name": "Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          250,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const body = $input.first().json.body;\nconst target = body.target || '';\nconst domain = body.domain || 'general';\nconst depth = body.depth || 'standard';\nif (!target) throw new Error('Missing target');\nreturn [{ json: { target, domain, depth } }];"
+        },
+        "id": "validate",
+        "name": "Validate",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          470,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "return [{\n  json: {\n    task: `Code review of: ${$json.target}. Domain: ${$json.domain}.`,\n    context: { agent_id: 'code-reviewer', code: $json.target, language: $json.domain }\n  }\n}];"
+        },
+        "id": "prepare-cr",
+        "name": "Prepare CR",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          690,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://nova-core-backend-1:8000/api/v1/agents/runtime/dispatch",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "id": "dispatch-cr",
+        "name": "Dispatch CR",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          910,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const cr = $input.first().json;\nconst crResult = cr.result || cr;\nconst findings = crResult.findings || [];\nconst blockers = findings.filter(f => f.severity === 'blocker').length;\nlet score = Math.max(0, 100 - blockers * 20);\nlet verdict = score >= 80 ? 'READY' : 'NEEDS_WORK';\nreturn [{ json: { status: 'completed', target: $('Validate').first().json.target, readiness_score: score, verdict, findings, timestamp: new Date().toISOString() } }];"
+        },
+        "id": "synthesize",
+        "name": "Synthesize",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1130,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "respondWith": "json",
+          "responseBody": "={{ $json }}",
+          "options": {
+            "responseCode": 200
+          }
+        },
+        "id": "resp",
+        "name": "Respond",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "typeVersion": 1.1,
+        "position": [
+          1350,
+          300
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Validate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate": {
+        "main": [
+          [
+            {
+              "node": "Prepare CR",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare CR": {
+        "main": [
+          [
+            {
+              "node": "Dispatch CR",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Dispatch CR": {
+        "main": [
+          [
+            {
+              "node": "Synthesize",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Synthesize": {
+        "main": [
+          [
+            {
+              "node": "Respond",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "active": false,
+    "settings": {
+      "executionOrder": "v1"
+    }
+  }
+]

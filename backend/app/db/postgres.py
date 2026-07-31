@@ -13,7 +13,8 @@ class Database:
 
 
 async def init_database(settings: Settings) -> Database:
-    engine = create_async_engine(settings.database_url, pool_pre_ping=True, pool_size=5, max_overflow=10)
+    # Use database_url_raw (with password) for actual connection
+    engine = create_async_engine(settings.database_url_raw, pool_pre_ping=True, pool_size=5, max_overflow=10)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as connection:
         await connection.execute(text("SELECT 1"))
