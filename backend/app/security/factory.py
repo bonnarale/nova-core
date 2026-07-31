@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from app.security.engine import SecurityEngine
@@ -17,6 +18,9 @@ class SecurityFactory:
     @staticmethod
     def create_engine(config: SecurityConfig | None = None) -> SecurityEngine:
         """Create a fully wired SecurityEngine instance."""
+        if config is None:
+            token_secret = os.environ.get("NOVA_TOKEN_SECRET", "")
+            config = SecurityConfig(token_secret=token_secret)
         engine = SecurityEngine(config=config)
         logger.info("SecurityFactory created engine")
         return engine
