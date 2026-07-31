@@ -102,6 +102,7 @@ class ProjectORM(Base):
     decisions = Column(JSONB, nullable=True, default=list)
     phases = Column(JSONB, nullable=True, default=list)
     milestones = Column(JSONB, nullable=True, default=list)
+    documents = Column(JSONB, nullable=True, default=list)
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

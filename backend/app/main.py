@@ -130,6 +130,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     tool_manager = ToolManager()
     tool_factory = ToolFactory(manager=tool_manager)
     tool_factory.register_all_builtins()
+    tool_factory.register_verticals()
     tool_runtime = ToolRuntime(manager=tool_manager)
     app.state.tool_manager = tool_manager
     app.state.tool_factory = tool_factory

@@ -97,6 +97,17 @@ class ToolFactory:
             except Exception as exc:
                 logger.warning("Failed to register builtin %s: %s", tool_cls.__name__, exc)
 
+    def register_verticals(self) -> None:
+        """Register vertical tool modules (consulting, etc.)."""
+        try:
+            from app.tools.verticals.consulting import ConsultingTools
+            vertical = ConsultingTools()
+            for tool in vertical.get_tools():
+                self._manager.register(tool)
+                logger.info("Registered vertical tool: %s", tool.spec.name)
+        except Exception as exc:
+            logger.warning("Failed to register consulting vertical: %s", exc)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "templates": list(self._templates.keys()),

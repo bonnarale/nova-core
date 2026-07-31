@@ -5,6 +5,29 @@ import { Card, Button, Badge, Input, Spinner, Modal, StatusBadge } from "@/compo
 import { PageHeader } from "@/components/dashboard";
 import { novaWeb, type Project } from "@/lib/nova-api";
 
+interface ProjectDocument {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  content: string;
+  created_at: string;
+}
+
+const DOC_STATUS_LABELS: Record<string, { label: string; color: string }> = {
+  draft: { label: "Borrador", color: "bg-gray-600" },
+  pending_approval: { label: "Pendiente Aprobación", color: "bg-yellow-600" },
+  approved: { label: "Aprobado — pendiente de envío manual", color: "bg-green-600" },
+  rejected: { label: "Rechazado", color: "bg-red-600" },
+};
+
+const DOC_TYPE_ICONS: Record<string, string> = {
+  proposal: "📝",
+  report: "📊",
+  contract: "📄",
+  invoice: "🧾",
+};
+
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -13,6 +36,9 @@ export default function ProjectsPage() {
   const [selected, setSelected] = useState<Project | null>(null);
   const [form, setForm] = useState({ name: "", description: "" });
   const [creating, setCreating] = useState(false);
+  const [activeTab, setActiveTab] = useState<"details" | "documents">("details");
+  const [documents, setDocuments] = useState<ProjectDocument[]>([]);
+  const [loadingDocs, setLoadingDocs] = useState(false);
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -27,6 +53,27 @@ export default function ProjectsPage() {
 
   useEffect(() => { fetchProjects(); }, [fetchProjects]);
 
+  const fetchDocuments = useCallback(async (projectId: string) => {
+    setLoadingDocs(true);
+    try {
+      const res = await fetch(`/api/v1/projects/${projectId}/documents`);
+      if (res.ok) {
+        const data = await res.json();
+        setDocuments(data.documents || []);
+      }
+    } catch {
+      // keep previous
+    } finally {
+      setLoadingDocs(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selected) {
+      fetchDocuments(selected.id);
+    }
+  }, [selected, fetchDocuments]);
+
   const handleCreate = async () => {
     if (!form.name.trim()) return;
     setCreating(true);
@@ -39,6 +86,30 @@ export default function ProjectsPage() {
       // handle silently
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleApproveDoc = async (docId: string) => {
+    if (!selected) return;
+    try {
+      await fetch(`/api/v1/projects/${selected.id}/documents/${docId}?status=approved`, {
+        method: "PATCH",
+      });
+      fetchDocuments(selected.id);
+    } catch {
+      // handle silently
+    }
+  };
+
+  const handleRejectDoc = async (docId: string) => {
+    if (!selected) return;
+    try {
+      await fetch(`/api/v1/projects/${selected.id}/documents/${docId}?status=rejected`, {
+        method: "PATCH",
+      });
+      fetchDocuments(selected.id);
+    } catch {
+      // handle silently
     }
   };
 
@@ -65,63 +136,124 @@ export default function ProjectsPage() {
       {selected ? (
         <div>
           <Button size="sm" variant="ghost" onClick={() => setSelected(null)} className="mb-4">&larr; Back to list</Button>
-          <Card>
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h2 className="text-xl font-bold text-gray-200">{selected.name}</h2>
-                <p className="text-sm text-gray-400 mt-1">{selected.description}</p>
-              </div>
-              <StatusBadge status={selected.status} />
-            </div>
 
-            <div className="flex items-center gap-3 mb-4">
-              <div className="flex-1 bg-gray-700 rounded-full h-2.5">
-                <div className="bg-green-500 h-2.5 rounded-full transition-all" style={{ width: `${selected.progress}%` }} />
-              </div>
-              <span className="text-sm text-gray-300">{selected.progress}%</span>
-            </div>
+          {/* Tabs */}
+          <div className="flex gap-2 mb-4">
+            <Button size="sm" variant={activeTab === "details" ? "primary" : "ghost"} onClick={() => setActiveTab("details")}>
+              Detalles
+            </Button>
+            <Button size="sm" variant={activeTab === "documents" ? "primary" : "ghost"} onClick={() => setActiveTab("documents")}>
+              Documentos ({documents.length})
+            </Button>
+          </div>
 
-            {selected.phases && selected.phases.length > 0 && (
-              <div className="mb-6">
-                <h3 className="text-sm font-medium text-gray-400 mb-3">Phases</h3>
-                <div className="space-y-2">
-                  {selected.phases.map((phase, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <StatusBadge status={phase.status} />
-                      <span className="text-sm text-gray-300 flex-1">{phase.name}</span>
-                      <div className="w-32 bg-gray-700 rounded-full h-1.5">
-                        <div className="bg-indigo-500 h-1.5 rounded-full" style={{ width: `${phase.progress}%` }} />
-                      </div>
-                      <span className="text-xs text-gray-500">{phase.progress}%</span>
-                    </div>
-                  ))}
+          {activeTab === "details" ? (
+            <Card>
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-200">{selected.name}</h2>
+                  <p className="text-sm text-gray-400 mt-1">{selected.description}</p>
                 </div>
+                <StatusBadge status={selected.status} />
               </div>
-            )}
 
-            {selected.milestones && selected.milestones.length > 0 && (
-              <div>
-                <h3 className="text-sm font-medium text-gray-400 mb-3">Milestones</h3>
-                <div className="space-y-2">
-                  {selected.milestones.map((m) => (
-                    <div key={m.id} className="flex items-center justify-between bg-gray-900/50 rounded-lg p-3">
-                      <div className="flex items-center gap-3">
-                        <StatusBadge status={m.status} />
-                        <span className="text-sm text-gray-300">{m.title}</span>
-                      </div>
-                      {m.due_date && <span className="text-xs text-gray-500">{new Date(m.due_date).toLocaleDateString()}</span>}
-                    </div>
-                  ))}
+              <div className="flex items-center gap-3 mb-4">
+                <div className="flex-1 bg-gray-700 rounded-full h-2.5">
+                  <div className="bg-green-500 h-2.5 rounded-full transition-all" style={{ width: `${selected.progress}%` }} />
                 </div>
+                <span className="text-sm text-gray-300">{selected.progress}%</span>
               </div>
-            )}
 
-            {selected.tasks_count !== undefined && (
-              <div className="mt-4 text-sm text-gray-400">
-                Tasks: {selected.completed_tasks || 0} / {selected.tasks_count}
-              </div>
-            )}
-          </Card>
+              {selected.phases && selected.phases.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-sm font-medium text-gray-400 mb-3">Phases</h3>
+                  <div className="space-y-2">
+                    {selected.phases.map((phase, i) => (
+                      <div key={i} className="flex items-center gap-3">
+                        <StatusBadge status={phase.status} />
+                        <span className="text-sm text-gray-300 flex-1">{phase.name}</span>
+                        <div className="w-32 bg-gray-700 rounded-full h-1.5">
+                          <div className="bg-indigo-500 h-1.5 rounded-full" style={{ width: `${phase.progress}%` }} />
+                        </div>
+                        <span className="text-xs text-gray-500">{phase.progress}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {selected.milestones && selected.milestones.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-400 mb-3">Milestones</h3>
+                  <div className="space-y-2">
+                    {selected.milestones.map((m) => (
+                      <div key={m.id} className="flex items-center justify-between bg-gray-900/50 rounded-lg p-3">
+                        <div className="flex items-center gap-3">
+                          <StatusBadge status={m.status} />
+                          <span className="text-sm text-gray-300">{m.title}</span>
+                        </div>
+                        {m.due_date && <span className="text-xs text-gray-500">{new Date(m.due_date).toLocaleDateString()}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {selected.tasks_count !== undefined && (
+                <div className="mt-4 text-sm text-gray-400">
+                  Tasks: {selected.completed_tasks || 0} / {selected.tasks_count}
+                </div>
+              )}
+            </Card>
+          ) : (
+            <Card title="Documentos del Proyecto">
+              {loadingDocs ? (
+                <div className="flex justify-center py-8"><Spinner size="md" /></div>
+              ) : documents.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  No hay documentos ainda. Use las herramientas de consulting para generar propuestas, informes, contratos o facturas.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {documents.map((doc) => {
+                    const statusInfo = DOC_STATUS_LABELS[doc.status] || DOC_STATUS_LABELS.draft;
+                    const icon = DOC_TYPE_ICONS[doc.type] || "📄";
+                    return (
+                      <div key={doc.id} className="flex items-center justify-between bg-gray-900/50 rounded-lg p-4">
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl">{icon}</span>
+                          <div>
+                            <div className="text-sm font-medium text-gray-200">{doc.name}</div>
+                            <div className="text-xs text-gray-500">
+                              {doc.type} &middot; {new Date(doc.created_at).toLocaleDateString()}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-1 rounded text-xs text-white ${statusInfo.color}`}>
+                            {statusInfo.label}
+                          </span>
+                          {doc.status === "pending_approval" && (
+                            <>
+                              <Button size="sm" variant="primary" onClick={() => handleApproveDoc(doc.id)}>
+                                Aprobar
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => handleRejectDoc(doc.id)}>
+                                Rechazar
+                              </Button>
+                            </>
+                          )}
+                          {doc.status === "approved" && (
+                            <span className="text-xs text-green-400 italic">Pendiente de envío manual</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
