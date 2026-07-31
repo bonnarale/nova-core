@@ -71,11 +71,10 @@ async def list_activity(
 async def list_recent_activity(
     request: Request,
     limit: int = Query(20, ge=1, le=100),
-    token: Token = Depends(get_current_token),
 ) -> ActivityListResponse:
-    """Alias for list_activity — filtered by authenticated user."""
+    """Alias for list_activity — returns all recent entries (public endpoint)."""
     repo = _get_activity_repo(request)
-    entries = await repo.list_by_user(user_id=UUID(token.user_id), limit=limit)
+    entries = await repo.list_recent(limit=limit)
     return ActivityListResponse(
         entries=[
             ActivityEntry(

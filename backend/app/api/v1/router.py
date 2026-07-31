@@ -67,4 +67,6 @@ router.include_router(tasks_router, dependencies=_protected)
 router.include_router(tools_router, dependencies=_protected)
 router.include_router(user_profile_router, dependencies=_protected)
 router.include_router(workflows_router, dependencies=_protected)
-router.include_router(activity_router, dependencies=_protected)
+
+# Public routes — activity visible to dashboard without auth
+router.include_router(activity_router)
