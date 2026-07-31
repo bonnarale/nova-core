@@ -188,6 +188,7 @@ async def chat(req: ChatRequest, request: Request) -> dict[str, Any]:
 
     # 5. Run agent via kernel (with cognitive engine intent detection)
     task_id: str | None = None
+    kernel_result: dict[str, Any] = {}
     try:
         # Try cognitive engine for intent detection first
         cognitive_engine = getattr(request.app.state, "cognitive_engine", None)
@@ -211,13 +212,24 @@ async def chat(req: ChatRequest, request: Request) -> dict[str, Any]:
                 task_id = state.execution_result.get("task_id")
                 logger.info("Chat: task created with id=%s", task_id)
             
-            # If cognitive engine routes to a specific agent, use that
-            if action == DecisionAction.RUN_META_CYCLE:
-                agent_id = "meta"
-            elif hasattr(state.decision, 'agent_id') and state.decision.agent_id:
-                agent_id = state.decision.agent_id
+            # Check if approval was auto-rejected (budget exceeded, etc.)
+            if state.execution_result and state.execution_result.get("approval_rejected"):
+                return {
+                    "response": state.execution_result.get("message", "Action rejected by policy."),
+                    "session_id": session_id,
+                    "task_id": None,
+                    "actions_taken": [],
+                    "objectives": [],
+                    "projects": [],
+                    "tasks": [],
+                    "approval_required": False,
+                    "approval_rejected": True,
+                    "approval_id": state.execution_result.get("approval_id"),
+                    "approval_category": state.execution_result.get("approval_category"),
+                    "reason": state.execution_result.get("reason"),
+                }
 
-            # Check if approval is required (gate intercepted the action)
+            # Check if approval is required (gate intercepted the action) — BEFORE routing
             if state.execution_result and state.execution_result.get("approval_required"):
                 approval_id = state.execution_result.get("approval_id")
                 approval_category = state.execution_result.get("approval_category")
@@ -235,13 +247,51 @@ async def chat(req: ChatRequest, request: Request) -> dict[str, Any]:
                     "approval_category": approval_category,
                 }
 
-        logger.info("Chat: routing to agent=%s", agent_id)
-        
-        kernel_result = await kernel.run_agent(
-            agent_id=agent_id,
-            task=message,
-            session_id=session_id_uuid,
-        )
+            # If cognitive engine delegated to an agent, use the execution result directly
+            delegation_actions = {
+                DecisionAction.DELEGATE_TO_PLANNER,
+                DecisionAction.DELEGATE_TO_RESEARCHER,
+                DecisionAction.DELEGATE_TO_CODER,
+                DecisionAction.DELEGATE_TO_EXECUTOR,
+                DecisionAction.DELEGATE_TO_MEMORY,
+                DecisionAction.DELEGATE_TO_REVIEWER,
+                DecisionAction.DELEGATE_TO_OPENCODE,
+            }
+
+            # Handle tool execution results (consulting, etc.)
+            if action == DecisionAction.EXECUTE_TOOL and state.execution_result:
+                logger.info("Chat: tool execution result from %s",
+                            state.execution_result.get("tool_name"))
+                tool_result = state.execution_result
+                if tool_result.get("success"):
+                    data = tool_result.get("data", {})
+                    if isinstance(data, dict) and "content" in data:
+                        response_text = data["content"]
+                    else:
+                        response_text = tool_result.get("message", str(data))
+                else:
+                    response_text = f"Error: {tool_result.get('error', 'Tool execution failed')}"
+                kernel_result = tool_result
+            elif action in delegation_actions and state.execution_result:
+                logger.info("Chat: using delegation result from %s", action.value)
+                kernel_result = state.execution_result
+                # Extract agent_id from the result for response formatting
+                if "agent_id" in state.execution_result:
+                    agent_id = state.execution_result["agent_id"]
+            else:
+                # If cognitive engine routes to a specific agent, use that
+                if action == DecisionAction.RUN_META_CYCLE:
+                    agent_id = "meta"
+                elif hasattr(state.decision, 'agent_id') and state.decision.agent_id:
+                    agent_id = state.decision.agent_id
+
+                logger.info("Chat: routing to agent=%s", agent_id)
+                
+                kernel_result = await kernel.run_agent(
+                    agent_id=agent_id,
+                    task=message,
+                    session_id=session_id_uuid,
+                )
     except Exception as exc:
         logger.error("Kernel execution failed: %s", exc, exc_info=True)
         raise HTTPException(
@@ -250,15 +300,68 @@ async def chat(req: ChatRequest, request: Request) -> dict[str, Any]:
         )
 
     # 6. Extract response text from kernel result
-    # Handle both LLMAgent format and MetaAgent format
+    # Handle delegation results, LLMAgent format, and MetaAgent format
     response_text = ""
+
+    # Handle tool execution results (consulting, search_market, etc.)
+    if isinstance(kernel_result, dict) and "tool_name" in kernel_result and "success" in kernel_result:
+        if kernel_result.get("success"):
+            data = kernel_result.get("data", {})
+            if isinstance(data, dict) and "content" in data:
+                response_text = data["content"]
+            elif isinstance(data, dict):
+                response_text = str(data)
+            else:
+                response_text = str(data) if data else kernel_result.get("message", "Tool executed successfully")
+        else:
+            response_text = f"Error: {kernel_result.get('error', 'Tool execution failed')}"
     
-    # Try LLMAgent format first
-    response_data = kernel_result.get("response", {})
-    if isinstance(response_data, dict):
-        message_obj = response_data.get("message", {})
-        if isinstance(message_obj, dict):
-            response_text = message_obj.get("content", "")
+    # Handle delegation results (from cognitive engine)
+    if not response_text and "result" in kernel_result and "agent_id" in kernel_result:
+        # This is a delegation result from _execute_delegate
+        agent_result = kernel_result["result"]
+        if isinstance(agent_result, dict):
+            # Try to extract response from agent result
+            response_data = agent_result.get("response", {})
+            if isinstance(response_data, dict):
+                message_obj = response_data.get("message", {})
+                if isinstance(message_obj, dict):
+                    response_text = message_obj.get("content", "")
+            
+            # If no response text, check for other formats
+            if not response_text:
+                # Handle planner agent format (plan, steps, summary)
+                if "plan" in agent_result and "steps" in agent_result:
+                    plan = agent_result["plan"]
+                    steps = agent_result["steps"]
+                    summary = agent_result.get("summary", "")
+                    
+                    # Format the plan nicely
+                    parts = []
+                    if plan:
+                        parts.append(f"**Plan:** {plan}")
+                    if steps:
+                        parts.append("\n**Steps:**")
+                        for i, step in enumerate(steps, 1):
+                            parts.append(f"{i}. {step}")
+                    if summary:
+                        parts.append(f"\n**Summary:** {summary}")
+                    
+                    response_text = "\n".join(parts)
+                elif "summary" in agent_result:
+                    response_text = agent_result["summary"]
+                elif "error" in agent_result:
+                    response_text = f"Error: {agent_result['error']}"
+                elif "content" in agent_result:
+                    response_text = agent_result["content"]
+    
+    # Try LLMAgent format first (if not already extracted)
+    if not response_text:
+        response_data = kernel_result.get("response", {})
+        if isinstance(response_data, dict):
+            message_obj = response_data.get("message", {})
+            if isinstance(message_obj, dict):
+                response_text = message_obj.get("content", "")
     
     # If no response text, try MetaAgent format
     if not response_text:
@@ -454,6 +557,14 @@ async def approve_item(approval_id: str, request: Request) -> dict[str, Any]:
     if approval is None:
         raise HTTPException(status_code=404, detail="Approval not found")
 
+    # Record budget usage if a project has a budget set
+    projects_mgr = getattr(request.app.state, "projects_manager", None)
+    if projects_mgr is not None and hasattr(projects_mgr, 'projects'):
+        for project in projects_mgr.projects.values():
+            if hasattr(project, 'approval_budget') and project.approval_budget:
+                comps["approvals"].record_budget_usage(project.approval_budget, approval.risk_level)
+                break  # Record for first project with budget
+
     # Re-execute the original action that was gated
     execution_result = None
     metadata = approval.metadata or {}
@@ -488,6 +599,22 @@ async def approve_item(approval_id: str, request: Request) -> dict[str, Any]:
             logger.error("Approval re-execution failed: %s", exc, exc_info=True)
             execution_result = {"error": str(exc)}
 
+    # Record approval_grant decision in project if bridge is available
+    project_goal_bridge = getattr(request.app.state, "project_goal_bridge", None)
+    if project_goal_bridge is not None:
+        project_id = original_payload.get("project_id") if original_payload else None
+        if project_id:
+            try:
+                await project_goal_bridge.record_decision(
+                    project_id=project_id,
+                    action_type="approval_grant",
+                    agent_id="web_user",
+                    description=f"Approval granted for: {approval.description}",
+                    result_summary=f"Action {approval.action_type} approved by web_user",
+                )
+            except Exception:
+                logger.debug("Failed to record approval_grant decision")
+
     return {
         "approval": approval.__dict__,
         "execution_result": execution_result,
@@ -504,6 +631,28 @@ async def reject_item(approval_id: str, request: Request) -> dict[str, Any]:
     result = comps["approvals"].reject(approval_id, reviewer="web_user")
     if result is None:
         raise HTTPException(status_code=404, detail="Approval not found")
+
+    # Record approval_reject decision in project if bridge is available
+    project_goal_bridge = getattr(request.app.state, "project_goal_bridge", None)
+    if project_goal_bridge is not None:
+        # Find the original approval to get metadata
+        original = comps["approvals"].get(approval_id)
+        if original is not None:
+            metadata = getattr(original, "metadata", {}) or {}
+            payload = metadata.get("payload", {}) or {}
+            project_id = payload.get("project_id")
+            if project_id:
+                try:
+                    await project_goal_bridge.record_decision(
+                        project_id=project_id,
+                        action_type="approval_reject",
+                        agent_id="web_user",
+                        description=f"Approval rejected for: {original.description}",
+                        result_summary=f"Action {original.action_type} rejected by web_user",
+                    )
+                except Exception:
+                    logger.debug("Failed to record approval_reject decision")
+
     return result.__dict__
 
 

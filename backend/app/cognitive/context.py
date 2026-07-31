@@ -24,6 +24,7 @@ class IntentType(str, Enum):
     KNOWLEDGE_GRAPH = "KNOWLEDGE_GRAPH"
     SDD_TASK = "SDD_TASK"
     META_IMPROVEMENT = "META_IMPROVEMENT"
+    CONSULTING = "CONSULTING"
 
 
 @dataclass

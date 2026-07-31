@@ -109,6 +109,19 @@ class RuleBasedIntentDetector(IntentDetector):
             "audit capabilities", "improve the system", "self-evolve",
             "evolution cycle", "improve agent system",
         ],
+        IntentType.CONSULTING: [
+            "proposal", "propuesta", "propuesta comercial",
+            "report", "informe", "informe de consultoría",
+            "contract", "contrato", "contrato de servicios",
+            "invoice", "factura", "proforma",
+            "market research", "investigación de mercado",
+            "generate proposal", "generar propuesta",
+            "generate report", "generar informe",
+            "generate contract", "generar contrato",
+            "generate invoice", "generar factura",
+            "quote", "cotización", "presupuesto",
+            "consulting", "consultoría", "consultor",
+        ],
     }
 
     async def detect(self, context: CognitiveContext) -> tuple[IntentType, float]:

@@ -14,6 +14,19 @@ logger = logging.getLogger(__name__)
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
+# Paths that don't require authentication
+PUBLIC_PATHS = {
+    "/health",
+    "/api/v1/auth/login",
+    "/api/v1/auth/register",
+    "/api/v1/nova-web/chat",
+    "/api/v1/nova-web/dashboard",
+    "/api/v1/nova-web/status",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+}
+
 
 async def get_security_engine(request: Request):
     """Retrieve the security engine from app state."""
@@ -24,10 +37,28 @@ async def get_security_engine(request: Request):
 
 
 async def get_current_token(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     engine: Any = Depends(get_security_engine),
 ) -> Token:
-    """Validate the Bearer token and return the Token domain model."""
+    """Validate the Bearer token and return the Token domain model.
+
+    Skips auth for public paths (login, register, health, etc.).
+    """
+    # Skip auth for public paths
+    path = request.url.path
+    if path in PUBLIC_PATHS or any(path.startswith(p) for p in ["/docs", "/openapi", "/redoc"]):
+        # Return a dummy token for public paths
+        from app.security.models import Token
+        from datetime import datetime, timezone
+        return Token(
+            token_id="public",
+            user_id="anonymous",
+            token_type="access",
+            scopes=[],
+            expires_at=datetime.max.replace(tzinfo=timezone.utc),
+        )
+
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

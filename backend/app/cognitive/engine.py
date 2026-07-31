@@ -58,6 +58,7 @@ class CognitiveEngine:
         event_publisher: Any | None = None,
         approvals_manager: Any | None = None,
         evolution_engine: Any | None = None,
+        tool_runtime: Any | None = None,
     ) -> None:
         self._goal_manager = goal_manager
         self._task_manager = task_manager
@@ -75,6 +76,8 @@ class CognitiveEngine:
         self._vector_memory_engine = vector_memory_engine
         self._event_publisher = event_publisher
         self._evolution_engine = evolution_engine
+        self._tool_runtime = tool_runtime
+        self._project_bridge = None  # Set via inject_project_bridge()
         self._router = CognitiveRouter(
             detector=detector or RuleBasedIntentDetector(),
             handlers=handlers or default_handler_registry(),
@@ -251,7 +254,34 @@ class CognitiveEngine:
                         description=task_description,
                         requester="cognitive_engine",
                         metadata={"reasoning": decision.reasoning, "payload": decision.payload},
+                        project_id=decision.payload.get("project_id"),
                     )
+                    # Record approval_request decision in project
+                    if self._project_bridge is not None:
+                        _pid = decision.payload.get("project_id")
+                        if _pid:
+                            try:
+                                await self._project_bridge.record_decision(
+                                    project_id=_pid,
+                                    action_type="approval_request",
+                                    agent_id="cognitive_engine",
+                                    description=f"Approval requested: {mandatory_category}",
+                                    result_summary=f"Action {approval.action_type} pending review",
+                                )
+                            except Exception:
+                                logger.debug("Failed to record approval_request decision")
+
+                    # Check if the approval was auto-rejected (e.g. budget exceeded)
+                    if approval.status == "rejected":
+                        return {
+                            "approval_required": False,
+                            "approval_rejected": True,
+                            "approval_id": approval.id,
+                            "approval_category": mandatory_category,
+                            "message": f"This action was automatically rejected ({getattr(approval, 'reason', 'budget_exceeded')}).",
+                            "reason": getattr(approval, "reason", "budget_exceeded"),
+                        }
+
                     return {
                         "approval_required": True,
                         "approval_id": approval.id,
@@ -279,6 +309,9 @@ class CognitiveEngine:
 
         if action == DecisionAction.RUN_META_CYCLE:
             return await self._execute_meta_cycle(decision, context)
+
+        if action == DecisionAction.EXECUTE_TOOL:
+            return await self._execute_tool(decision, context)
 
         if action in (
             DecisionAction.DELEGATE_TO_PLANNER,
@@ -312,7 +345,27 @@ class CognitiveEngine:
         self, decision: CognitiveDecision, context: CognitiveContext
     ) -> dict[str, Any]:
         task = decision.payload.get("task", context.raw_input)
-        return {"error": "WorkflowEngine not available", "task": task}
+        if self._workflow_engine is None:
+            return {"error": "WorkflowEngine not available", "task": task}
+        try:
+            workflow_id = decision.payload.get("workflow_id")
+            if workflow_id is None:
+                return {"error": "No workflow_id in decision payload", "task": task}
+            execution = await self._workflow_engine.create_execution(
+                workflow_id=workflow_id,
+                input_data=decision.payload,
+                user_id=context.user_id,
+                session_id=context.session_id,
+            )
+            execution = await self._workflow_engine.start_execution(execution.id)
+            return execution.to_dict()
+        except Exception as exc:
+            logger.exception("Workflow execution failed: %s", exc)
+            return {"error": f"Workflow execution failed: {exc}", "task": task}
+
+    def inject_project_bridge(self, bridge: Any) -> None:
+        """Inject ProjectGoalBridge for decision handlers."""
+        self._project_bridge = bridge
 
     async def _execute_knowledge_graph(
         self, decision: CognitiveDecision, context: CognitiveContext
@@ -336,6 +389,46 @@ class CognitiveEngine:
             }
         except Exception as exc:
             return {"error": f"Evolution cycle failed: {exc}"}
+
+    async def _execute_tool(
+        self, decision: CognitiveDecision, context: CognitiveContext
+    ) -> dict[str, Any]:
+        """Execute a tool via ToolRuntime."""
+        if self._tool_runtime is None:
+            logger.error("ToolRuntime not available")
+            return {"error": "ToolRuntime not available"}
+
+        tool_name = decision.payload.get("tool_name")
+        params = decision.payload.get("params", {})
+
+        if not tool_name:
+            logger.error("No tool_name in decision payload")
+            return {"error": "No tool_name in decision payload"}
+
+        logger.info("Executing tool: %s with params: %s", tool_name, params)
+
+        try:
+            from app.tools.context import ToolContext
+
+            ctx = ToolContext(
+                tool_id=tool_name,
+                user_id=context.user_id or "",
+            )
+            result = await self._tool_runtime.execute_tool(
+                tool_name=tool_name,
+                params=params,
+                context=ctx,
+            )
+            logger.info("Tool %s result: success=%s, error=%s", tool_name, result.success, result.error)
+            return {
+                "tool_name": tool_name,
+                "success": result.success,
+                "data": result.data,
+                "error": result.error,
+            }
+        except Exception as exc:
+            logger.exception("Tool execution failed: %s", exc)
+            return {"error": f"Tool execution failed: {exc}", "tool_name": tool_name}
 
     async def _execute_create_goal(
         self, decision: CognitiveDecision, context: CognitiveContext
@@ -431,6 +524,22 @@ class CognitiveEngine:
             task=decision.payload.get("task", ""),
             context=decision.payload,
         )
+
+        # Record agent_dispatch decision in project if bridge is available
+        if self._project_bridge is not None:
+            project_id = decision.payload.get("project_id")
+            if project_id:
+                try:
+                    await self._project_bridge.record_decision(
+                        project_id=project_id,
+                        action_type="agent_dispatch",
+                        agent_id=agent_id,
+                        description=f"Delegated to agent: {agent_id}",
+                        result_summary=f"Task dispatched: {decision.payload.get('task', '')[:100]}",
+                    )
+                except Exception:
+                    logger.debug("Failed to record agent_dispatch decision")
+
         return {"agent_id": agent_id, "result": result}
 
     async def _execute_profile_update(

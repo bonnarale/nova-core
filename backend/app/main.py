@@ -175,6 +175,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         evolution_engine=evolution_engine,
         approvals_manager=approvals_manager,
         workflow_engine=workflow_engine,
+        tool_runtime=tool_runtime,
     )
     app.state.cognitive_engine = cognitive_engine
 

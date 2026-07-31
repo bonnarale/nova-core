@@ -31,6 +31,7 @@ class DecisionAction(str, Enum):
     QUERY_KNOWLEDGE_GRAPH = "QUERY_KNOWLEDGE_GRAPH"
     DELEGATE_TO_OPENCODE = "DELEGATE_TO_OPENCODE"
     RUN_META_CYCLE = "RUN_META_CYCLE"
+    EXECUTE_TOOL = "EXECUTE_TOOL"
     FALLBACK = "FALLBACK"
 
 
@@ -268,7 +269,7 @@ class SystemHandler(DecisionHandler):
 
 
 class PlannerHandler(DecisionHandler):
-    """Handler for planning intents — create an executable plan."""
+    """Handler for planning intents — delegate to planner agent."""
 
     @property
     def handled_intents(self) -> set[IntentType]:
@@ -276,15 +277,15 @@ class PlannerHandler(DecisionHandler):
 
     async def decide(self, context: CognitiveContext) -> CognitiveDecision:
         return CognitiveDecision(
-            action=DecisionAction.CREATE_PLAN,
+            action=DecisionAction.DELEGATE_TO_PLANNER,
             handler_name="planner",
             payload={
-                "objective": context.raw_input,
+                "task": context.raw_input,
                 "user_id": context.user_id,
                 "session_id": context.session_id,
             },
             confidence=0.8,
-            reasoning="User expressed an objective that requires planning — creating executable plan.",
+            reasoning="User expressed an objective that requires planning — delegating to planner agent.",
         )
 
 
@@ -410,6 +411,75 @@ class MetaHandler(DecisionHandler):
 
 
 # ---------------------------------------------------------------------------
+# Consulting handler
+# ---------------------------------------------------------------------------
+
+class ConsultingHandler(DecisionHandler):
+    """Handler for consulting intents — routes to consulting tools."""
+
+    @property
+    def handled_intents(self) -> set[IntentType]:
+        return {IntentType.CONSULTING}
+
+    async def decide(self, context: CognitiveContext) -> CognitiveDecision:
+        tool_name = self._select_tool(context.raw_input)
+        params = self._extract_params(context.raw_input, context.user_id)
+        return CognitiveDecision(
+            action=DecisionAction.EXECUTE_TOOL,
+            handler_name="consulting",
+            payload={
+                "tool_name": tool_name,
+                "params": params,
+                "user_id": context.user_id,
+            },
+            confidence=0.85,
+            reasoning=f"Consulting request detected — routing to {tool_name}.",
+        )
+
+    @staticmethod
+    def _select_tool(text: str) -> str:
+        t = text.lower()
+        if any(w in t for w in ("invoice", "factura", "proforma")):
+            return "generate_invoice"
+        if any(w in t for w in ("contract", "contrato")):
+            return "generate_contract"
+        if any(w in t for w in ("report", "informe")):
+            return "generate_report"
+        if any(w in t for w in ("market", "mercado", "competencia")):
+            return "search_market"
+        if any(w in t for w in ("proposal", "propuesta", "cotización", "presupuesto")):
+            return "generate_proposal"
+        return "generate_proposal"  # default
+
+    @staticmethod
+    def _extract_params(text: str, user_id: str | None) -> dict[str, Any]:
+        """Extract parameters from the user message."""
+        # Simple heuristic extraction — future: use LLM for better extraction
+        params: dict[str, Any] = {
+            "project_brief": text,
+        }
+
+        # Try to extract client name from common patterns
+        t = text.lower()
+        for prefix in ("for ", "para ", "for the company ", "para la empresa "):
+            idx = t.find(prefix)
+            if idx != -1:
+                client = text[idx + len(prefix):].strip()
+                # Take first sentence or up to 50 chars
+                for sep in (".", ",", ":", "—", "\n"):
+                    sep_idx = client.find(sep)
+                    if sep_idx != -1:
+                        client = client[:sep_idx]
+                params["client_name"] = client[:50]
+                break
+
+        if "client_name" not in params:
+            params["client_name"] = "Client"
+
+        return params
+
+
+# ---------------------------------------------------------------------------
 # Convenience factory
 # ---------------------------------------------------------------------------
 
@@ -435,6 +505,7 @@ def default_handler_registry() -> dict[IntentType, DecisionHandler]:
         MemoryHandler(),
         ProfileUpdateHandler(),
         SystemHandler(),
+        ConsultingHandler(),
     ]
     registry: dict[IntentType, DecisionHandler] = {}
     for h in handlers:

@@ -14,6 +14,7 @@ class ToolResult:
         success: Whether the tool completed successfully.
         data: The output data produced by the tool.
         error: Error message if the tool failed.
+        message: Human-readable summary of the result.
         duration_ms: Execution duration in milliseconds.
         tool_name: Name of the tool that produced this result.
         metadata: Additional metadata (warnings, partial results, etc.).
@@ -22,6 +23,7 @@ class ToolResult:
     success: bool = True
     data: Any = None
     error: str = ""
+    message: str = ""
     duration_ms: float = 0.0
     tool_name: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
